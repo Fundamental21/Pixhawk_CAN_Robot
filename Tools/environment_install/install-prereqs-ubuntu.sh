@@ -363,7 +363,7 @@ if [ ${RELEASE_CODENAME} == 'lunar' ] ||
         echo $SOURCE_LINE >> ~/$SHELL_LOGIN
     fi
 fi
-
+$PIP config set global.index-url https://mirrors.aliyun.com/pypi/simple/
 # try update setuptools and wheel before installing pip package that may need compilation
 $PIP install $PIP_USER_ARGUMENT -U pip setuptools wheel
 
