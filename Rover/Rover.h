@@ -35,6 +35,7 @@
 #include <AP_Vehicle/AP_Vehicle.h>                  // needed for AHRS build
 #include <AP_WheelEncoder/AP_WheelEncoder.h>
 #include <AP_WheelEncoder/AP_WheelRateControl.h>
+#include <AP_WheelEncoder/AP_Hall_Can_Backend.h>
 #include <AP_Logger/AP_Logger.h>
 #include <AP_OSD/AP_OSD.h>
 #include <AR_Motors/AP_MotorsUGV.h>

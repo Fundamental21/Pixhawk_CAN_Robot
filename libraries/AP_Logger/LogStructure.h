@@ -173,6 +173,25 @@ static const uint8_t LS_MULTIPLIERS_SIZE = 17;
 /*
   log structures common to all vehicle types
  */
+
+ struct PACKED log_MotorData {
+    LOG_PACKET_HEADER;
+    uint64_t time_us;
+    uint8_t motor_id;
+    float velocity;
+    float position;
+    uint16_t error_code;
+};
+
+// CAN发送数据日志结构
+struct PACKED log_CANTx {
+    LOG_PACKET_HEADER;
+    uint64_t time_us;
+    uint8_t can_id;
+    uint8_t dlc;
+    uint8_t data[8];
+};
+
 struct PACKED log_Format {
     LOG_PACKET_HEADER;
     uint8_t type;
@@ -688,6 +707,13 @@ struct PACKED log_VER {
 #define PIDx_FMT "Qffffffff"
 #define PIDx_UNITS "smmnnnooo"
 #define PIDx_MULTS "F00000000"
+
+// 在LOG_EXTRA_STRUCTURES中添加结构定义
+#define LOG_EXTRA_STRUCTURES \
+    { LOG_MOTOR_DATA_MSG, sizeof(log_MotorData), \
+      "MOTD", "QBffH", "TimeUS,MotorID,Velocity,Position,ErrorCode", "s#mm-", "F-00-", true }, \
+    { LOG_CAN_TX_MSG, sizeof(log_CANTx), \
+      "CANTX", "QBBBBBBBBBB", "TimeUS,ID,DLC,D0,D1,D2,D3,D4,D5,D6,D7", "s#---------", "F----------", true }
 
 // @LoggerMessage: ADSB
 // @Description: Automatic Dependent Serveillance - Broadcast detected vehicle information
@@ -1337,7 +1363,11 @@ LOG_STRUCTURE_FROM_AIS \
     { LOG_VER_MSG, sizeof(log_VER), \
       "VER",   "QBHBBBBIZHB", "TimeUS,BT,BST,Maj,Min,Pat,FWT,GH,FWS,APJ,BU", "s----------", "F----------", false }, \
     { LOG_MOTBATT_MSG, sizeof(log_MotBatt), \
-      "MOTB", "QfffffB",  "TimeUS,LiftMax,BatVolt,ThLimit,ThrAvMx,ThrOut,FailFlags", "s------", "F------" , true }
+      "MOTB", "QfffffB",  "TimeUS,LiftMax,BatVolt,ThLimit,ThrAvMx,ThrOut,FailFlags", "s------", "F------" , true }, \
+    { LOG_MOTOR_DATA_MSG, sizeof(log_MotorData), \
+      "MOTD", "QBffH", "TimeUS,MotorID,Velocity,Position,ErrorCode", "s#mm-", "F-00-", true }, \
+    { LOG_CAN_TX_MSG, sizeof(log_CANTx), \
+      "CANTX", "QBBBBBBBBBB", "TimeUS,ID,DLC,D0,D1,D2,D3,D4,D5,D6,D7", "s#---------", "F----------", true }
 
 // message types 0 to 63 reserved for vehicle specific use
 
@@ -1425,6 +1455,9 @@ enum LogMessages : uint8_t {
     LOG_RCOUT2_MSG,
     LOG_RCOUT3_MSG,
     LOG_IDS_FROM_FENCE,
+
+    LOG_MOTOR_DATA_MSG,  // 选择一个未使用的ID
+    LOG_CAN_TX_MSG,      // CAN发送数据日志
 
     _LOG_LAST_MSG_
 };

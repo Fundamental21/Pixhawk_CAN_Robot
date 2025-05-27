@@ -88,6 +88,7 @@ const AP_Scheduler::Task Rover::scheduler_tasks[] = {
 #endif
     SCHED_TASK_CLASS(AP_WindVane,         &rover.g2.windvane,      update,         20,  100,  30),
     SCHED_TASK(update_wheel_encoder,   50,    200,  36),
+    SCHED_TASK_CLASS(Hall_Can_Backend, Hall_Can_Backend::get_singleton(), Log_Write_Motor, 100, 100, 37), // add log motor data module
     SCHED_TASK(update_compass,         10,    200,  39),
 #if HAL_LOGGING_ENABLED
     SCHED_TASK(update_logging1,        10,    200,  45),

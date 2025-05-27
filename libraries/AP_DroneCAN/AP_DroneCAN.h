@@ -175,6 +175,28 @@ public:
 private:
     void loop(void);
 
+    void can_heartbeat_loop(void);
+
+    void motor_can_drive_loop(void);
+
+    void wheel_can_drive_loop(void);
+
+    void send_heartbeat(uint8_t can_id);
+
+    void send_motor_drive(uint8_t can_id, int32_t rpm, int32_t speed_val);
+
+    int32_t calc_wheel_erpm(int16_t pwm);
+
+    int32_t calc_wheel_erpm_compact(int16_t pwm);
+
+    void send_wheel_erpm(uint8_t can_id, int32_t erpm);
+
+    void send_wheel_stop(uint8_t can_id);
+
+    void send_wheel_erpm_compact(uint8_t can_id, int32_t r_erpm, int32_t l_erpm);
+
+    void send_data_frame(uint8_t can_id, uint8_t frame_id, int32_t data);
+
     ///// SRV output /////
     void SRV_send_actuator();
     void SRV_send_esc();
@@ -229,9 +251,16 @@ private:
     AP_Int16 _pool_size;
     AP_Int32 _esc_rv;
 
+    AP_Int8 _w_c_id;
+
+    uint8_t _wheel_can_id = (uint8_t)0x10;
+
     uint32_t *mem_pool;
 
     uint8_t _driver_index;
+
+    volatile uint16_t _right_pwm = 1500;
+    volatile uint16_t _left_pwm = 1500;;
 
     CanardInterface canard_iface;
 

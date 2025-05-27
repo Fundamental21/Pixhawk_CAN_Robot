@@ -6,6 +6,7 @@
 #include <canard/transfer_object.h>
 #include <AP_Math/AP_Math.h>
 #include <dronecan_msgs.h>
+#include <AP_WheelEncoder/AP_Hall_Can_Backend.h>
 extern const AP_HAL::HAL& hal;
 #define LOG_TAG "DroneCANIface"
 #include <canard.h>
@@ -328,7 +329,8 @@ void CanardInterface::update_rx_protocol_stats(int16_t res)
 
 void CanardInterface::processRx() {
     AP_HAL::CANFrame rxmsg;
-    for (uint8_t i=0; i<num_ifaces; i++) {
+    for (uint8_t i=0; i<num_ifaces; i++) {  
+        //0= CAN1, 1=CAN2
         while(true) {
             if (ifaces[i] == NULL) {
                 break;
@@ -353,6 +355,13 @@ void CanardInterface::processRx() {
                 if (aux_11bit_driver != nullptr) {
                     aux_11bit_driver->handle_frame(rxmsg);
                 }
+
+                // Handle frame with Hall CAN Backend if available
+                Hall_Can_Backend* hall_backend = Hall_Can_Backend::get_singleton();
+                if (hall_backend != nullptr) {
+                    hall_backend->handle_frame(rxmsg);  // handle rxmsg from CAN1 or CAN2
+                }
+                
                 continue;
             }
 

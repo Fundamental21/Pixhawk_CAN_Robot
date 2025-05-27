@@ -51,6 +51,8 @@
 #include <AP_Mount/AP_Mount_Xacti.h>
 #include <string.h>
 
+#include <AP_WheelEncoder/AP_Hall_Can_Backend.h>
+
 #if AP_DRONECAN_SERIAL_ENABLED
 #include "AP_DroneCAN_serial.h"
 #endif
@@ -266,7 +268,8 @@ const AP_Param::GroupInfo AP_DroneCAN::var_info[] = {
 #endif
 #endif // AP_DRONECAN_SERIAL_ENABLED
 
-    // RLY_RT is index 23 but has to be above SER_EN so its not hidden
+    // @Param: WHEEL_CAN_ID
+    // AP_GROUPINFO("WHEEL_CAN_ID", 25,  AP_DroneCAN, _w_c_id, -1),
 
     AP_GROUPEND
 };
@@ -490,12 +493,115 @@ void AP_DroneCAN::init(uint8_t driver_index, bool enable_filters)
         return;
     }
 
+    hal.util->snprintf(_thread_name, sizeof(_thread_name), "canhb_%u", driver_index);
+
+    if (!hal.scheduler->thread_create(FUNCTOR_BIND_MEMBER(&AP_DroneCAN::can_heartbeat_loop, void), _thread_name, DRONECAN_STACK_SIZE, AP_HAL::Scheduler::PRIORITY_CAN, 0)) {
+        debug_dronecan(AP_CANManager::LOG_ERROR, "Can: couldn't create heartbeat thread\n\r");
+        return;
+    }
+
+    hal.util->snprintf(_thread_name, sizeof(_thread_name), "motor_drive_%u", driver_index);
+
+    if (!hal.scheduler->thread_create(FUNCTOR_BIND_MEMBER(&AP_DroneCAN::motor_can_drive_loop, void), _thread_name, DRONECAN_STACK_SIZE, AP_HAL::Scheduler::PRIORITY_CAN, 0)) {
+        debug_dronecan(AP_CANManager::LOG_ERROR, "Can: couldn't create motor drive thread\n\r");
+        return;
+    }
+
+    if (_wheel_can_id > 0) {
+        hal.util->snprintf(_thread_name, sizeof(_thread_name), "wheel_drive_t_%u", driver_index);
+
+        if (!hal.scheduler->thread_create(FUNCTOR_BIND_MEMBER(&AP_DroneCAN::wheel_can_drive_loop, void), _thread_name, DRONECAN_STACK_SIZE, AP_HAL::Scheduler::PRIORITY_CAN, 0)) {
+            debug_dronecan(AP_CANManager::LOG_ERROR, "Can: couldn't create wheel drive thread\n\r");
+            return;
+        }
+    }
+
 #if AP_DRONECAN_SERIAL_ENABLED
     serial.init(this);
 #endif
 
     _initialized = true;
     debug_dronecan(AP_CANManager::LOG_INFO, "DroneCAN: init done\n\r");
+}
+
+void AP_DroneCAN::can_heartbeat_loop(void) {
+     while (true) {
+        if (!_initialized) {
+            hal.scheduler->delay_microseconds(1000);
+            continue;
+        }
+
+        if (_wheel_can_id > 0) {
+            send_heartbeat(_wheel_can_id);
+        } else {
+            send_heartbeat(Hall_Can_Backend::RIGHT_WHEEL_CAN_ID);
+            send_heartbeat(Hall_Can_Backend::LEFT_WHEEL_CAN_ID);
+        }
+
+        hal.scheduler->delay(200);
+    }
+}
+
+void AP_DroneCAN::motor_can_drive_loop(void) {
+     while (true) {
+        if (!_initialized) {
+            hal.scheduler->delay_microseconds(1000);
+            continue;
+        }
+
+        if (_wheel_can_id > 0) {
+            int32_t rpm = 5.0f;
+            int32_t speed_val = static_cast<uint32_t>(roundf(rpm * 101.0f * (5.0f / 3.0f)));
+            send_motor_drive(_wheel_can_id, rpm, speed_val);
+        }
+
+        hal.scheduler->delay(200);
+    }
+}
+
+void AP_DroneCAN::wheel_can_drive_loop(void) {
+    while (true) {
+        if (!_initialized) {
+            hal.scheduler->delay_microseconds(1000);
+            continue;
+        }
+
+       if (_wheel_can_id > 0) {
+            int32_t r_erpm = calc_wheel_erpm_compact(_right_pwm);
+            int32_t l_erpm = calc_wheel_erpm_compact(_left_pwm);
+            send_wheel_erpm_compact(_wheel_can_id, r_erpm, l_erpm);
+       }
+
+       hal.scheduler->delay(200);
+   }
+}
+
+
+void AP_DroneCAN::send_heartbeat(uint8_t can_id){
+    AP_HAL::CANFrame txmsg {};
+    txmsg.id = can_id;
+    txmsg.dlc = 1;
+    txmsg.data[0] = 0x00;
+    write_aux_frame(txmsg, 10 * 1000);
+}
+
+void AP_DroneCAN::send_motor_drive(uint8_t can_id, int32_t rpm, int32_t speed_val){
+    AP_HAL::CANFrame txmsg {};
+
+    txmsg.id = 0x01;  //can_id is 1
+    txmsg.dlc = 5;
+    txmsg.data[0] = 0x1D;
+    txmsg.data[1] = (speed_val >> 0)  & 0xFF;  
+    txmsg.data[2] = (speed_val >> 8)  & 0xFF;
+    txmsg.data[3] = (speed_val >> 16) & 0xFF;
+    txmsg.data[4] = (speed_val >> 24) & 0xFF;  
+    
+    // 记录发送的CAN消息到日志
+    AP::logger().Write_MessageF("CAN TX: Motor Drive ID=0x%02X cmd=0x%02X speed=%d rpm=%d", 
+                               (unsigned)txmsg.id, (unsigned)txmsg.data[0], 
+                               (int)speed_val, (int)rpm);
+    
+    write_aux_frame(txmsg, 10 * 1000);
 }
 
 void AP_DroneCAN::loop(void)
@@ -508,7 +614,7 @@ void AP_DroneCAN::loop(void)
 
         // ensure that the DroneCAN thread cannot completely saturate
         // the CPU, preventing low priority threads from running
-        hal.scheduler->delay_microseconds(100);
+        hal.scheduler->delay_microseconds(10);
 
         canard_iface.process(1);
 
@@ -909,7 +1015,27 @@ void AP_DroneCAN::SRV_push_servos()
     for (uint8_t i = 0; i < DRONECAN_SRV_NUMBER; i++) {
         // Check if this channels has any function assigned
         if (SRV_Channels::channel_function(i) >= SRV_Channel::k_none) {
-            _SRV_conf[i].pulse = SRV_Channels::srv_channel(i)->get_output_pwm();
+            uint16_t p = SRV_Channels::srv_channel(i)->get_output_pwm();
+            uint8_t id = 0;
+            if (i == 0) {
+                id = Hall_Can_Backend::RIGHT_WHEEL_CAN_ID;
+                _right_pwm = p;
+            } else if (i == 2) {
+                id = Hall_Can_Backend::LEFT_WHEEL_CAN_ID;
+                _left_pwm = p;
+            }
+
+            if (id != 0) {
+                if (_wheel_can_id <= 0) {
+                    int32_t erpm = calc_wheel_erpm(p);     
+                    send_wheel_erpm(id, erpm);
+                    if (erpm == 0) {
+                        send_wheel_stop(id);
+                    }
+                } 
+            }
+
+            _SRV_conf[i].pulse = p;
             _SRV_conf[i].esc_pending = true;
             _SRV_conf[i].servo_pending = true;
         }
@@ -943,6 +1069,80 @@ void AP_DroneCAN::SRV_push_servos()
             SRV_send_esc();
         }
     }
+}
+
+int32_t AP_DroneCAN::calc_wheel_erpm(int16_t pwm){
+    int32_t erpm = (int32_t)((pwm - 1500) * 22.5);
+    if (erpm > -300 && erpm < 300) {
+        erpm = 0;
+    }
+    return erpm;
+}
+
+int32_t AP_DroneCAN::calc_wheel_erpm_compact(int16_t pwm){
+    int32_t erpm = (int32_t)((pwm - 1500) * 6.5);
+    if (erpm > -10 && erpm < 10) {
+        erpm = 0;
+    }
+    return erpm;
+}
+
+void AP_DroneCAN::send_wheel_erpm(uint8_t can_id, int32_t erpm){
+    // 记录发送的CAN消息到日志
+    AP::logger().Write_MessageF("CAN TX: Wheel ERPM ID=0x%02X erpm=%d", 
+                               (unsigned)can_id, (int)erpm);
+    
+    send_data_frame(can_id, 0x02, erpm);
+}
+
+void AP_DroneCAN::send_wheel_erpm_compact(uint8_t can_id, int32_t r_erpm, int32_t l_erpm){
+    AP_HAL::CANFrame txmsg {};
+    txmsg.id = can_id;
+    txmsg.dlc = 7;
+    txmsg.data[0] = 0x02;
+    txmsg.data[1] = (0xFF & (l_erpm >> 16));
+    txmsg.data[2] = (0xFF & (l_erpm >> 8));
+    txmsg.data[3] = (0xFF & l_erpm);
+    txmsg.data[4] = (0xFF & (r_erpm >> 16));
+    txmsg.data[5] = (0xFF & (r_erpm >> 8));
+    txmsg.data[6] = (0xFF & r_erpm);
+    
+    // 记录发送的CAN消息到日志
+    AP::logger().Write_MessageF("CAN TX: Wheel Compact ID=0x%02X L_erpm=%d R_erpm=%d", 
+                               (unsigned)can_id, (int)l_erpm, (int)r_erpm);
+    
+    write_aux_frame(txmsg, 10 * 1000);
+}
+
+void AP_DroneCAN::send_data_frame(uint8_t can_id, uint8_t frame_id, int32_t data) {
+    AP_HAL::CANFrame txmsg {};
+    txmsg.id = can_id;
+    txmsg.dlc = 5;
+    txmsg.data[0] = frame_id;
+    txmsg.data[1] = (0xFF & (data >> 24));
+    txmsg.data[2] = (0xFF & (data >> 16));
+    txmsg.data[3] = (0xFF & (data >> 8));
+    txmsg.data[4] = (0xFF & data);
+    
+    // 记录发送的CAN消息到日志
+    AP::logger().Write_MessageF("CAN TX: Data Frame ID=0x%02X frame_id=0x%02X data=%d", 
+                               (unsigned)can_id, (unsigned)frame_id, (int)data);
+    
+    write_aux_frame(txmsg, 10 * 1000);
+}
+
+void AP_DroneCAN::send_wheel_stop(uint8_t can_id) {
+    AP_HAL::CANFrame txmsg {};
+    txmsg.id = can_id;
+    txmsg.dlc = 3;
+    txmsg.data[0] = 0x01;
+    txmsg.data[1] = 0;
+    txmsg.data[2] = 0;
+    
+    // 记录发送的CAN消息到日志
+    AP::logger().Write_MessageF("CAN TX: Wheel Stop ID=0x%02X", (unsigned)can_id);
+    
+    write_aux_frame(txmsg, 10 * 1000);
 }
 
 // notify state send
@@ -1823,6 +2023,21 @@ bool AP_DroneCAN::write_aux_frame(AP_HAL::CANFrame &out_frame, const uint64_t ti
         // don't allow extended frames to be sent by auxillary driver
         return false;
     }
+    
+    // 记录所有通过aux发送的CAN帧到日志
+    AP::logger().Write_MessageF("CAN TX AUX: ID=0x%02X DLC=%d data=[%02X %02X %02X %02X %02X %02X %02X %02X]", 
+                               (unsigned)out_frame.id, (unsigned)out_frame.dlc,
+                               (unsigned)out_frame.data[0], (unsigned)out_frame.data[1],
+                               (unsigned)out_frame.data[2], (unsigned)out_frame.data[3],
+                               (unsigned)out_frame.data[4], (unsigned)out_frame.data[5],
+                               (unsigned)out_frame.data[6], (unsigned)out_frame.data[7]);
+    
+    // 调用Hall_Can_Backend的日志记录函数
+    Hall_Can_Backend* hall_backend = Hall_Can_Backend::get_singleton();
+    if (hall_backend != nullptr) {
+        hall_backend->Log_Write_CAN_TX(out_frame);
+    }
+    
     return canard_iface.write_aux_frame(out_frame, timeout_us);
 }
 
