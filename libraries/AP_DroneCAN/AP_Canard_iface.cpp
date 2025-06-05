@@ -359,7 +359,7 @@ void CanardInterface::processRx() {
                 // Handle frame with Hall CAN Backend if available
                 Hall_Can_Backend* hall_backend = Hall_Can_Backend::get_singleton();
                 if (hall_backend != nullptr) {
-                    hall_backend->handle_frame(rxmsg);  // handle rxmsg from CAN1 or CAN2
+                    hall_backend->handle_frame(rxmsg, i+1);  // 传递正确的CAN总线ID: i+1 (CAN1=1, CAN2=2)
                 }
                 
                 continue;

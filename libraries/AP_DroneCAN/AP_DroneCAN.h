@@ -175,36 +175,27 @@ public:
 private:
     void loop(void);
 
-    void can_heartbeat_loop(void);
-
     void motor_can_drive_loop(void);
-
-    void wheel_can_drive_loop(void);
-
-    void send_heartbeat(uint8_t can_id);
 
     void send_motor_drive(uint8_t can_id, int32_t rpm, int32_t speed_val);
 
+    // Wheel control functions
     int32_t calc_wheel_erpm(int16_t pwm);
-
     int32_t calc_wheel_erpm_compact(int16_t pwm);
-
     void send_wheel_erpm(uint8_t can_id, int32_t erpm);
-
-    void send_wheel_stop(uint8_t can_id);
-
     void send_wheel_erpm_compact(uint8_t can_id, int32_t r_erpm, int32_t l_erpm);
-
+    void send_wheel_stop(uint8_t can_id);
     void send_data_frame(uint8_t can_id, uint8_t frame_id, int32_t data);
 
     ///// SRV output /////
-    void SRV_send_actuator();
-    void SRV_send_esc();
+    void SRV_send_actuator(void);
 #if AP_DRONECAN_HIMARK_SERVO_SUPPORT
-    void SRV_send_himark();
+    void SRV_send_himark(void);
 #endif
-
-    //scale servo output appropriately before sending
+    void SRV_send_esc(void);
+#if AP_DRONECAN_HOBBYWING_ESC_SUPPORT
+    void SRV_send_esc_hobbywing(void);
+#endif
     int16_t scale_esc_output(uint8_t idx);
 
     // SafetyState
@@ -252,8 +243,6 @@ private:
     AP_Int32 _esc_rv;
 
     AP_Int8 _w_c_id;
-
-    uint8_t _wheel_can_id = (uint8_t)0x10;
 
     uint32_t *mem_pool;
 
@@ -391,7 +380,6 @@ private:
     } hobbywing;
     void hobbywing_ESC_update();
 
-    void SRV_send_esc_hobbywing();
     Canard::Publisher<com_hobbywing_esc_RawCommand> esc_hobbywing_raw{canard_iface};
     Canard::Publisher<com_hobbywing_esc_GetEscID> esc_hobbywing_GetEscID{canard_iface};
     Canard::ObjCallback<AP_DroneCAN, com_hobbywing_esc_GetEscID> esc_hobbywing_GetEscID_cb{this, &AP_DroneCAN::handle_hobbywing_GetEscID};

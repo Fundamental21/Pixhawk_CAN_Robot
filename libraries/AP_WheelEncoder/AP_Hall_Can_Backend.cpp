@@ -5,8 +5,23 @@
 
 Hall_Can_Backend* Hall_Can_Backend::_singleton = new (std::nothrow) Hall_Can_Backend();
 
-Hall_Can_Backend::Hall_Can_Backend(){
-
+Hall_Can_Backend::Hall_Can_Backend() :
+    robotarm_can_queue(nullptr),
+    robotarm_processor(nullptr)
+{
+    // 初始化机械臂CAN帧队列 - 增大缓冲区以支持100Hz处理
+    // 缓冲区大小200帧：支持100Hz * 2秒缓冲，确保不丢帧
+    robotarm_can_queue = new ObjectBuffer<CAN_Frame_Item>(200);
+    if (robotarm_can_queue == nullptr) {
+        GCS_SEND_TEXT(MAV_SEVERITY_ERROR, "Hall_Can: Failed to create robotarm CAN queue");
+    } else {
+        GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Hall_Can: RobotArm CAN queue initialized (size=200)");
+    }
+    
+    // 初始化队列统计
+    queue_stats.frames_queued = 0;
+    queue_stats.queue_overflows = 0;
+    queue_stats.frames_processed = 0;
 }
 
 int Hall_Can_Backend::get_index(uint32_t wheel_can_id){
@@ -20,18 +35,55 @@ int Hall_Can_Backend::get_index(uint32_t wheel_can_id){
 }
 
 void Hall_Can_Backend::handle_frame(AP_HAL::CANFrame &frame) {
+    // 默认版本，假设是CAN1 (向后兼容)
+    handle_frame(frame, 1);
+}
+
+void Hall_Can_Backend::handle_frame(AP_HAL::CANFrame &frame, uint8_t can_bus_id) {
     uint32_t can_id = get_can_id(frame);
     uint64_t current_time_us = AP_HAL::micros64();
     
-    // 直接写入日志消息
-    AP::logger().Write_MessageF("CAN RX: ID=0x%02X data[0]=0x%02X", 
-                               (unsigned)can_id, (unsigned)frame.data[0]);
+    // 将所有CAN帧转发到机械臂队列（包含正确的CAN总线信息）
+    if (robotarm_can_queue != nullptr) {
+        // 创建队列项，使用正确的CAN总线ID
+        CAN_Frame_Item queue_item(frame, current_time_us, can_bus_id);
+        
+        // 尝试推送到队列（非阻塞，优化为100Hz处理）
+        if (robotarm_can_queue->push(queue_item)) {
+            queue_stats.frames_queued++;
+            
+            // 减少日志频率以支持100Hz - 每1000帧记录一次统计信息
+            if ((queue_stats.frames_queued % 1000) == 0) {
+                AP::logger().Write_MessageF("RobotArm CAN%d: Queued=%u Overflows=%u", 
+                                          (int)can_bus_id, (unsigned)queue_stats.frames_queued, 
+                                          (unsigned)queue_stats.queue_overflows);
+            }
+        } else {
+            // 队列满，记录溢出
+            queue_stats.queue_overflows++;
+            // 减少警告频率 - 每50次溢出报告一次
+            if ((queue_stats.queue_overflows % 50) == 1) {
+                GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "RobotArm CAN%d queue overflow: %u", 
+                             (int)can_bus_id, (unsigned)queue_stats.queue_overflows);
+            }
+        }
+    }
     
-    // 添加调试信息到GCS
-    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "CAN RX: ID=0x%02X data[0]=0x%02X", 
-                 (unsigned)can_id, (unsigned)frame.data[0]);
+    // 继续原有的处理逻辑（但减少日志输出以提高性能）
+    // 只对特定的调试场景输出详细日志
+    bool detailed_logging = false; // 可以通过参数控制
     
-    // 确定电机索引
+    if (detailed_logging) {
+        // 直接写入日志消息
+        AP::logger().Write_MessageF("CAN RX: ID=0x%02X data[0]=0x%02X", 
+                                   (unsigned)can_id, (unsigned)frame.data[0]);
+        
+        // 添加调试信息到GCS
+        GCS_SEND_TEXT(MAV_SEVERITY_INFO, "CAN RX: ID=0x%02X data[0]=0x%02X", 
+                     (unsigned)can_id, (unsigned)frame.data[0]);
+    }
+    
+    // 确定电机索引 - 保持原有轮子编码器逻辑
     int motor_index = -1;
     switch(can_id) {
         case 0x01: motor_index = 0; break;  // motor 1
@@ -43,9 +95,7 @@ void Hall_Can_Backend::handle_frame(AP_HAL::CANFrame &frame) {
         case 0x07: motor_index = 6; break;  // motor 7
         case 0x08: motor_index = 7; break;  // motor 8
         default: 
-            // 对于不匹配的CAN ID，也记录一下
-            AP::logger().Write_MessageF("CAN: Unknown ID=0x%02X", (unsigned)can_id);
-            GCS_SEND_TEXT(MAV_SEVERITY_INFO, "CAN: Unknown ID=0x%02X", (unsigned)can_id);
+            // 对于不匹配的CAN ID，不输出日志以减少开销
             return;
     }
     
