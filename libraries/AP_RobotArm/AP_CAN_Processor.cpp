@@ -2,11 +2,16 @@
 #include "../AP_WheelEncoder/AP_Hall_Can_Backend.h"
 #include <GCS_MAVLink/GCS.h>
 #include <AP_Logger/AP_Logger.h>
+#include <AP_DroneCAN/AP_DroneCAN.h>
+#include <AP_CANManager/AP_CANManager.h>
+#include <AP_HAL/AP_HAL.h>
 #include <cmath>
 #include <algorithm>
 #include <memory>
 #include <functional>
 #include <limits>
+
+extern const AP_HAL::HAL& hal;
 
 namespace RobotArm {
 
@@ -210,6 +215,21 @@ float* AP_CAN_Processor::getTargetField(uint32_t can_id, CanChannel channel, voi
     return nullptr;
 }
 
+// 公共接口：处理CAN帧（假设来自CAN1）
+void AP_CAN_Processor::process_can_frame(const AP_HAL::CANFrame& frame) {
+    // 默认假设来自CAN1，调用私有的process_can_frame函数
+    process_can_frame(frame, 1);
+}
+
+void AP_CAN_Processor::log_can_frame(const AP_HAL::CANFrame& frame, const char* prefix) {
+    AP::logger().Write_MessageF("CAN_Processor %s: ID=0x%02X DLC=%d data=[%02X %02X %02X %02X %02X %02X %02X %02X]", 
+                               prefix, (unsigned)frame.id, (unsigned)frame.dlc,
+                               (unsigned)frame.data[0], (unsigned)frame.data[1],
+                               (unsigned)frame.data[2], (unsigned)frame.data[3],
+                               (unsigned)frame.data[4], (unsigned)frame.data[5],
+                               (unsigned)frame.data[6], (unsigned)frame.data[7]);
+}
+
 // ==================== TihuMotorController 实现 ====================
 
 // 快速命令验证使用二分搜索
@@ -361,6 +381,44 @@ float TihuMotorController::getMotorTemperature(uint8_t can_id, uint8_t motor_id)
     
     const float* temp = mit_receive_temperature.get_safe(channel, index);
     return temp ? *temp : std::numeric_limits<float>::quiet_NaN();
+}
+
+bool AP_CAN_Processor::write_can_frame(AP_HAL::CANFrame& frame, uint64_t timeout_us)
+{
+    // 记录发送的CAN消息到日志
+    AP::logger().Write_MessageF("CAN_Processor TX: ID=0x%02X DLC=%d data=[%02X %02X %02X %02X %02X %02X %02X %02X] to CAN1", 
+                               (unsigned)frame.id, (unsigned)frame.dlc,
+                               (unsigned)frame.data[0], (unsigned)frame.data[1],
+                               (unsigned)frame.data[2], (unsigned)frame.data[3],
+                               (unsigned)frame.data[4], (unsigned)frame.data[5],
+                               (unsigned)frame.data[6], (unsigned)frame.data[7]);
+    
+    // 专门通过CAN1发送，使用DroneCAN driver_index=0
+    AP_DroneCAN* dronecan = AP_DroneCAN::get_dronecan(0);  // 强制使用CAN1
+    if (dronecan != nullptr) {
+        bool success = dronecan->write_aux_frame(frame, timeout_us);
+        if (success) {
+            AP::logger().Write_MessageF("CAN_Processor: TX via DroneCAN CAN1 success");
+            return true;
+        } else {
+            AP::logger().Write_MessageF("CAN_Processor: TX via DroneCAN CAN1 failed");
+        }
+    }
+    
+    // 回退到直接HAL CAN1发送
+    if (hal.can[0] != nullptr && hal.can[0]->is_initialized()) {
+        int16_t result = hal.can[0]->send(frame, timeout_us, AP_HAL::CANIface::AbortOnError);
+        if (result > 0) {
+            AP::logger().Write_MessageF("CAN_Processor: TX via HAL CAN1 success");
+            return true;
+        } else {
+            AP::logger().Write_MessageF("CAN_Processor: TX via HAL CAN1 failed, result=%d", (int)result);
+        }
+    }
+    
+    // 所有方式都失败
+    AP::logger().Write_MessageF("CAN_Processor: All CAN1 send methods failed for ID=0x%02X", (unsigned)frame.id);
+    return false;
 }
 
 } // namespace RobotArm 

@@ -1,3 +1,53 @@
+# AP_RobotArm Library - CAN通信与控制系统
+
+本文档提供AP_RobotArm库的完整使用指南，包括CAN接口配置和消息转发系统的详细说明。
+
+## CAN接口配置总览
+
+### CAN1 - Robot Arm Control (Dedicated)
+- **Purpose**: Exclusively used for AP_RobotArm module communication
+- **RX Messages**: Motor feedback, sensor data from robot arm components
+- **TX Messages**: Motor control commands, configuration commands
+- **Processing**: All CAN1 messages are processed by `AP_CAN_Processor`
+- **Frequency**: Configurable via parameters
+
+### CAN2 - Reserved Interface
+- **Purpose**: Reserved for future expansion
+- **Status**: Interface available, logging enabled
+- **Processing**: Basic logging only, ready for future modules
+
+## 架构图
+
+```
+Hardware CAN1 ──→ CanardInterface ──→ AP_CAN_Processor ──→ MIT_Motor/Controllers
+                      ↑                      ↓
+                   rxmsg1               control_signals
+                   
+Hardware CAN2 ──→ CanardInterface ──→ [Reserved for future use]
+                      ↑
+                   rxmsg2 (logged only)
+```
+
+## 使用说明
+
+1. Connect robot arm controllers to **CAN1 only**
+2. Configure CAN parameters for CAN1
+3. CAN2 remains available for other systems
+
+## 参数配置
+
+- `CAN_D1_UC_CAN_RT`: CAN1 processing rate
+- `CAN_D1_UC_MOT_RT`: CAN1 motor command rate
+- `CAN_D2_UC_*`: CAN2 parameters (reserved)
+
+## 实现细节
+
+- MIT Motor controllers send to CAN1 via `write_aux_frame_to_iface(frame, timeout, 0)`
+- CAN_Processor routes all traffic through CAN1 interface
+- DroneCAN driver_index=0 handles CAN1, driver_index=1 handles CAN2
+
+---
+
 # ArduPilot CAN消息转发系统 - 统一架构版本
 
 ## 概述

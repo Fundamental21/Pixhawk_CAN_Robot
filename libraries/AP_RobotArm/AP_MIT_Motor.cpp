@@ -111,32 +111,21 @@ void MIT_Motor::tihu_motor_one_byte_ctrl(uint8_t can_id, uint8_t motor_id, uint8
 
 bool MIT_Motor::write_frame(AP_HAL::CANFrame& frame, uint64_t timeout_us)
 {
-    // 更新统计计数器
-    _can_stats.total_frames++;
-    
-    // 确保超时时间至少为10ms（10,000微秒）
-    if (timeout_us < 10000) {
-        timeout_us = 10000;
-    }
-    
-    // 首先尝试通过DroneCAN发送
+    // 记录发送的CAN消息到日志
+    AP::logger().Write_MessageF("MIT Motor TX: ID=0x%02X DLC=%d data=[%02X %02X %02X %02X %02X %02X %02X %02X]", 
+                               (unsigned)frame.id, (unsigned)frame.dlc,
+                               (unsigned)frame.data[0], (unsigned)frame.data[1],
+                               (unsigned)frame.data[2], (unsigned)frame.data[3],
+                               (unsigned)frame.data[4], (unsigned)frame.data[5],
+                               (unsigned)frame.data[6], (unsigned)frame.data[7]);
+                               
+    // AP_RobotArm模块专门通过CAN1发送，优先尝试DroneCAN方式
     if (try_send_via_dronecan(frame, timeout_us)) {
-        _can_stats.dronecan_success++;
         return true;
     }
     
-    // 回退到HAL接口
-    if (try_send_via_hal(frame, timeout_us)) {
-        _can_stats.hal_success++;
-        return true;
-    }
-    
-    // 所有方式都失败
-    AP::logger().Write_MessageF("MIT_Motor: All CAN send methods failed for ID=0x%02X (total failures: DroneCAN=%u, HAL=%u)", 
-                               (unsigned)frame.id,
-                               (unsigned)_can_stats.dronecan_failures,
-                               (unsigned)_can_stats.hal_failures);
-    return false;
+    // 如果DroneCAN不可用，尝试直接通过HAL发送到CAN1 (index=0)
+    return try_send_via_hal_can1(frame, timeout_us);
 }
 
 bool MIT_Motor::try_send_via_dronecan(AP_HAL::CANFrame& frame, uint64_t timeout_us)
@@ -198,6 +187,29 @@ bool MIT_Motor::try_send_via_hal(AP_HAL::CANFrame& frame, uint64_t timeout_us)
                 AP::logger().Write_MessageF("MIT_Motor: CAN%d send failed, result=%d", 
                                            iface_idx, (int)result);
             }
+        }
+    }
+    
+    // 所有HAL接口都失败
+    _can_stats.hal_failures++;
+    return false;
+}
+
+bool MIT_Motor::try_send_via_hal_can1(AP_HAL::CANFrame& frame, uint64_t timeout_us)
+{
+    // 尝试直接通过HAL发送到CAN1 (index=0)
+    AP_HAL::CANIface* iface = hal.can[0];
+    if (iface != nullptr && iface->is_initialized()) {
+        AP::logger().Write_MessageF("MIT_Motor: TX via HAL CAN1 ID=0x%02X DLC=%d", 
+                                   (unsigned)frame.id, 
+                                   (unsigned)frame.dlc);
+        
+        int16_t result = iface->send(frame, timeout_us, AP_HAL::CANIface::AbortOnError);
+        if (result > 0) {
+            return true;  // 成功发送
+        } else {
+            AP::logger().Write_MessageF("MIT_Motor: CAN1 send failed, result=%d", 
+                                       (int)result);
         }
     }
     

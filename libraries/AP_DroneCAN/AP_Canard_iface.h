@@ -3,6 +3,9 @@
 #if HAL_ENABLE_DRONECAN_DRIVERS
 #include <canard/interface.h>
 #include <dronecan_msgs.h>
+#include <AP_CANManager/AP_CANDriver.h>
+#include <AP_Common/Bitmask.h>
+#include <AP_RobotArm/AP_CAN_Processor.h>
 
 class AP_DroneCAN;
 class CANSensor;
@@ -55,6 +58,9 @@ public:
 
     // handler for outgoing frames for auxillary drivers
     bool write_aux_frame(AP_HAL::CANFrame &out_frame, const uint64_t timeout_us);
+    
+    // 新增：指定CAN接口发送aux frame的函数
+    bool write_aux_frame_to_iface(AP_HAL::CANFrame &out_frame, const uint64_t timeout_us, uint8_t target_iface);
     
 #if AP_TEST_DRONECAN_DRIVERS
     static CanardInterface& get_test_iface() { return test_iface; }

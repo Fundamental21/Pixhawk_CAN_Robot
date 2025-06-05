@@ -174,6 +174,13 @@ public:
      */
     void reset_statistics() { stats = Statistics(); }
 
+    // CAN消息接收和处理
+    void process_can_frame(const AP_HAL::CANFrame& frame);
+    void log_can_frame(const AP_HAL::CANFrame& frame, const char* prefix = "RX");
+    
+    // CAN消息发送（专门通过CAN1）
+    bool write_can_frame(AP_HAL::CANFrame& frame, uint64_t timeout_us = 50000);
+
 private:
     static AP_CAN_Processor* _singleton;
     

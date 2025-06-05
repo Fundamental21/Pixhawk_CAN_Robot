@@ -63,6 +63,9 @@ private:
     // 便利方法：尝试通过HAL直接发送
     bool try_send_via_hal(AP_HAL::CANFrame& frame, uint64_t timeout_us);
     
+    // 便利方法：尝试通过HAL CAN1发送
+    bool try_send_via_hal_can1(AP_HAL::CANFrame& frame, uint64_t timeout_us);
+    
     // CAN发送统计
     CANStats _can_stats;
 }; 

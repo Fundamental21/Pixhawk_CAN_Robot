@@ -1960,7 +1960,14 @@ bool AP_DroneCAN::write_aux_frame(AP_HAL::CANFrame &out_frame, const uint64_t ti
         hall_backend->Log_Write_CAN_TX(out_frame);
     }
     
-    return canard_iface.write_aux_frame(out_frame, timeout_us);
+    // 根据driver_index决定发送策略
+    if (_driver_index == 0) {
+        // CAN1 (driver_index=0): 使用指定接口发送，确保AP_RobotArm模块只通过CAN1发送
+        return canard_iface.write_aux_frame_to_iface(out_frame, timeout_us, 0);
+    } else {
+        // CAN2 (driver_index=1): 使用默认的广播发送
+        return canard_iface.write_aux_frame(out_frame, timeout_us);
+    }
 }
 
 #endif // HAL_NUM_CAN_IFACES

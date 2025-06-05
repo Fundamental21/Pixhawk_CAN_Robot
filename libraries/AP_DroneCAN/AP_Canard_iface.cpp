@@ -351,48 +351,48 @@ void CanardInterface::processRx() {
             }
 
             if (!rxmsg.isExtended()) {
-                // 11 bit frame, see if we have a handler
-                if (aux_11bit_driver != nullptr) {
-                    aux_11bit_driver->handle_frame(rxmsg);
+                // 11 bit frame, NOT DroneCAN/UAVCAN message
+                // 根据CAN接口分配处理逻辑
+                if (i == 0) {
+                    // CAN1 (i=0): 传给AP_RobotArm模块处理
+                    AP::logger().Write_MessageF("CAN1 RX: ID=0x%02X DLC=%d data=[%02X %02X %02X %02X %02X %02X %02X %02X] -> AP_RobotArm", 
+                                               (unsigned)rxmsg.id, (unsigned)rxmsg.dlc,
+                                               (unsigned)rxmsg.data[0], (unsigned)rxmsg.data[1],
+                                               (unsigned)rxmsg.data[2], (unsigned)rxmsg.data[3],
+                                               (unsigned)rxmsg.data[4], (unsigned)rxmsg.data[5],
+                                               (unsigned)rxmsg.data[6], (unsigned)rxmsg.data[7]);
+                    
+                    // 传给AP_RobotArm模块的processor解码
+                    RobotArm::AP_CAN_Processor* processor = RobotArm::AP_CAN_Processor::get_singleton();
+                    if (processor != nullptr) {
+                        processor->process_can_frame(rxmsg);
+                    }
+                } else if (i == 1) {
+                    // CAN2 (i=1): 保留接口，只记录日志
+                    AP::logger().Write_MessageF("CAN2 RX: ID=0x%02X DLC=%d data=[%02X %02X %02X %02X %02X %02X %02X %02X] -> Reserved", 
+                                               (unsigned)rxmsg.id, (unsigned)rxmsg.dlc,
+                                               (unsigned)rxmsg.data[0], (unsigned)rxmsg.data[1],
+                                               (unsigned)rxmsg.data[2], (unsigned)rxmsg.data[3],
+                                               (unsigned)rxmsg.data[4], (unsigned)rxmsg.data[5],
+                                               (unsigned)rxmsg.data[6], (unsigned)rxmsg.data[7]);
+                    
+                    // TODO: CAN2的处理逻辑，暂时保留接口
                 }
-
-                // Handle frame with Hall CAN Backend if available
-                Hall_Can_Backend* hall_backend = Hall_Can_Backend::get_singleton();
-                if (hall_backend != nullptr) {
-                    hall_backend->handle_frame(rxmsg, i+1);  // 传递正确的CAN总线ID: i+1 (CAN1=1, CAN2=2)
-                }
-                
                 continue;
             }
 
-            rx_frame.data_len = AP_HAL::CANFrame::dlcToDataLength(rxmsg.dlc);
-            memcpy(rx_frame.data, rxmsg.data, rx_frame.data_len);
-#if HAL_CANFD_SUPPORTED
-            rx_frame.canfd = rxmsg.canfd;
-#endif
             rx_frame.id = rxmsg.id;
-#if CANARD_MULTI_IFACE
-            rx_frame.iface_id = i;
-#endif
-            {
-                WITH_SEMAPHORE(_sem_rx);
+            memcpy(rx_frame.data, rxmsg.data, rxmsg.dlc);
+            rx_frame.data_len = rxmsg.dlc;
+            
+            // 29 bit frame, DroneCAN/UAVCAN message
+            // 记录DroneCAN接收消息
+            AP::logger().Write_MessageF("CAN%d DroneCAN RX: ID=0x%08X DLC=%d", 
+                                       i+1, (unsigned)rxmsg.id, (unsigned)rxmsg.dlc);
 
-                const int16_t res = canardHandleRxFrame(&canard, &rx_frame, timestamp);
-                if (res == -CANARD_ERROR_RX_MISSED_START) {
-                    // this might remaining frames from a message that we don't accept, so check
-                    uint64_t dummy_signature;
-                    if (shouldAcceptTransfer(&canard,
-                                        &dummy_signature,
-                                        extractDataType(rx_frame.id),
-                                        extractTransferType(rx_frame.id),
-                                        1)) { // doesn't matter what we pass here
-                        update_rx_protocol_stats(res);
-                    } else {
-                        protocol_stats.rx_ignored_not_wanted++;
-                    }
-                } else {
-                    update_rx_protocol_stats(res);
-                }
+            if (canardHandleRxFrame(&canard, &rx_frame, timestamp) < 0) {
+                // error in frame, log it
+                AP::logger().Write_MessageF("CAN%d DroneCAN frame error", i+1);
             }
         }
     }
@@ -475,6 +475,15 @@ bool CanardInterface::write_aux_frame(AP_HAL::CANFrame &out_frame, const uint64_
         ret |= ifaces[iface]->send(out_frame, timeout_us, 0) > 0;
     }
     return ret;
+}
+
+// 新增：指定CAN接口发送aux frame的函数
+bool CanardInterface::write_aux_frame_to_iface(AP_HAL::CANFrame &out_frame, const uint64_t timeout_us, uint8_t target_iface)
+{
+    if (target_iface >= num_ifaces || ifaces[target_iface] == NULL) {
+        return false;
+    }
+    return ifaces[target_iface]->send(out_frame, timeout_us, 0) > 0;
 }
 
 #endif // #if HAL_ENABLE_DRONECAN_DRIVERS
