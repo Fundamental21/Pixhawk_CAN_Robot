@@ -70,7 +70,10 @@ SCHED_TASK_CLASS arguments:
  */
 const AP_Scheduler::Task Rover::scheduler_tasks[] = {
     //         Function name,          Hz,     us,
-    SCHED_TASK(read_radio,             50,    200,   3),
+    SCHED_TASK(robot_arm_fast_loop,   400,    100,   1),  // 400Hz fast loop for main arm logic
+    SCHED_TASK(robot_arm_control_loop,100,    200,   2),  // 100Hz control loop  
+    SCHED_TASK(robot_arm_slow_loop,    20,    100,   3),  // 20Hz for logging
+    SCHED_TASK(read_radio,             50,    200,   4),
     SCHED_TASK(ahrs_update,           400,    400,   6),
     SCHED_TASK(read_rangefinders,      50,    200,   9),
 #if AP_OPTICALFLOW_ENABLED
@@ -147,6 +150,242 @@ const AP_Scheduler::Task Rover::scheduler_tasks[] = {
 };
 
 
+
+// Robot arm initialization - called once during startup
+void Rover::robot_arm_init()
+{
+    if (arm_initialized) {
+        return;
+    }
+    
+    for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
+        MotorInstance* m = joint_motor_list[i];
+        m->enabled = true;
+        m->mode = CTRL_MODE_POSITION;
+        m->first_command = true;
+        m->type = MOTOR_TYPE_MIT;
+        memset(&m->queue, 0, sizeof(PositionQueue));
+    }
+    
+    
+    // // Initialize control state
+    // arm_control_counter = 0;
+    // arm_t_counter = 0;
+    // arm_current_point = 0;
+    // debug_counter = 0;
+    
+    // // Clear debug buffers
+    // memset(debug_buffer, 0, sizeof(debug_buffer));
+    // memset(real_buffer, 0, sizeof(real_buffer));
+    // memset(pos_history, 0, sizeof(pos_history));
+    
+    arm_initialized = true;
+}
+
+// Fast loop - 400Hz - Main kinematics and trajectory planning
+// void Rover::robot_arm_fast_loop()
+// {
+//     if (!arm_initialized) {
+//         robot_arm_init();
+//         return;
+//     }
+    
+//     MotorInstance* can1_motor2 = &motor_instances[0][1];
+    
+//     // Original 500Hz logic - generate trajectory points
+//     if(can1_motor2->mode == CTRL_MODE_POSITION && arm_current_point < 50) {
+//         // Get target parameters
+//         memcpy(input_angles.angles, predefined_joints[arm_current_point], sizeof(predefined_joints[arm_current_point]));
+        
+//         // Forward calculate end pose
+//         if (forward_kinematic(&left_arm_config, &input_angles, &target_pose)) {
+//             // Inverse calculate joint angle
+//             if (inverse_kinematic(&left_arm_config, &target_pose, &input_angles, &solutions)) {
+//                 float weights[6] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+//                 if (find_optimal_solution(&left_arm_config, &solutions, &input_angles, weights, &ik_result)) {
+//                     float motor5_pos = ik_result.angles[0] * (180.0f / M_PI);
+//                     queue_push(&can1_motor2->queue, motor5_pos);
+//                     pos_history[arm_current_point] = motor5_pos;
+//                 }
+//             }
+//         }
+//         arm_current_point++;
+//     }
+// }
+
+// Control loop - 100Hz - Motor control and trapezoid planning  
+
+// init kinematics parameters
+static uint32_t current_point = 0;
+static float* raw_joints = NULL;
+static JointAngles input_angles;
+
+// Define predefined joint positions (example data - replace with actual trajectory)
+const float predefined_joints[50][6] = {
+    // Example trajectory points - replace with your actual robot arm trajectory
+    {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
+    {0.1f, 0.1f, 0.1f, 0.1f, 0.1f, 0.1f},
+    {0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f},
+    {0.3f, 0.3f, 0.3f, 0.3f, 0.3f, 0.3f},
+    {0.4f, 0.4f, 0.4f, 0.4f, 0.4f, 0.4f},
+    {0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f},
+    {0.6f, 0.6f, 0.6f, 0.6f, 0.6f, 0.6f},
+    {0.7f, 0.7f, 0.7f, 0.7f, 0.7f, 0.7f},
+    {0.8f, 0.8f, 0.8f, 0.8f, 0.8f, 0.8f},
+    {0.9f, 0.9f, 0.9f, 0.9f, 0.9f, 0.9f},
+    {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},
+    {1.1f, 1.1f, 1.1f, 1.1f, 1.1f, 1.1f},
+    {1.2f, 1.2f, 1.2f, 1.2f, 1.2f, 1.2f},
+    {1.3f, 1.3f, 1.3f, 1.3f, 1.3f, 1.3f},
+    {1.4f, 1.4f, 1.4f, 1.4f, 1.4f, 1.4f},
+    {1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f},
+    {1.6f, 1.6f, 1.6f, 1.6f, 1.6f, 1.6f},
+    {1.7f, 1.7f, 1.7f, 1.7f, 1.7f, 1.7f},
+    {1.8f, 1.8f, 1.8f, 1.8f, 1.8f, 1.8f},
+    {1.9f, 1.9f, 1.9f, 1.9f, 1.9f, 1.9f},
+    {2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f},
+    {2.1f, 2.1f, 2.1f, 2.1f, 2.1f, 2.1f},
+    {2.2f, 2.2f, 2.2f, 2.2f, 2.2f, 2.2f},
+    {2.3f, 2.3f, 2.3f, 2.3f, 2.3f, 2.3f},
+    {2.4f, 2.4f, 2.4f, 2.4f, 2.4f, 2.4f},
+    {2.5f, 2.5f, 2.5f, 2.5f, 2.5f, 2.5f},
+    {2.4f, 2.4f, 2.4f, 2.4f, 2.4f, 2.4f},
+    {2.3f, 2.3f, 2.3f, 2.3f, 2.3f, 2.3f},
+    {2.2f, 2.2f, 2.2f, 2.2f, 2.2f, 2.2f},
+    {2.1f, 2.1f, 2.1f, 2.1f, 2.1f, 2.1f},
+    {2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f},
+    {1.9f, 1.9f, 1.9f, 1.9f, 1.9f, 1.9f},
+    {1.8f, 1.8f, 1.8f, 1.8f, 1.8f, 1.8f},
+    {1.7f, 1.7f, 1.7f, 1.7f, 1.7f, 1.7f},
+    {1.6f, 1.6f, 1.6f, 1.6f, 1.6f, 1.6f},
+    {1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f},
+    {1.4f, 1.4f, 1.4f, 1.4f, 1.4f, 1.4f},
+    {1.3f, 1.3f, 1.3f, 1.3f, 1.3f, 1.3f},
+    {1.2f, 1.2f, 1.2f, 1.2f, 1.2f, 1.2f},
+    {1.1f, 1.1f, 1.1f, 1.1f, 1.1f, 1.1f},
+    {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},
+    {0.9f, 0.9f, 0.9f, 0.9f, 0.9f, 0.9f},
+    {0.8f, 0.8f, 0.8f, 0.8f, 0.8f, 0.8f},
+    {0.7f, 0.7f, 0.7f, 0.7f, 0.7f, 0.7f},
+    {0.6f, 0.6f, 0.6f, 0.6f, 0.6f, 0.6f},
+    {0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f},
+    {0.4f, 0.4f, 0.4f, 0.4f, 0.4f, 0.4f},
+    {0.3f, 0.3f, 0.3f, 0.3f, 0.3f, 0.3f},
+    {0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f},
+    {0.1f, 0.1f, 0.1f, 0.1f, 0.1f, 0.1f}
+};
+
+void Rover::robot_arm_control_loop()
+{
+    if (!arm_initialized) {
+        return;
+    }
+
+  // 500Hz trajectory generation
+    if (arm_current_point < 50) {
+        // get target parameters
+        memcpy(input_angles.angles, predefined_joints[arm_current_point], sizeof(predefined_joints[arm_current_point]));
+        
+        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
+            MotorInstance* m = joint_motor_list[i];
+            float motor_pos = input_angles.angles[i] * (180.0f / M_PI);
+            queue_push(&m->queue, motor_pos);
+        }
+        arm_current_point++; 
+    }  
+
+    // 100hz motor control
+        static bool all_terminated = true; // check all motor has finished motion
+        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
+            MotorInstance* m = joint_motor_list[i];
+            // 读取当前电机位置
+            float current_pos = get_motor_position(m->can_id, m->motor_id, m->type);
+            
+            // 如果是第一次命令且队列中有数据
+            if (m->first_command && m->queue.count > 0) {
+                // 初始化梯形轨迹规划器，从当前位置到队列中的第一个目标位置
+                trapezoid_init(&m->planner, current_pos, queue_pop(&m->queue));
+                m->first_command = false;
+            }
+
+            bool is_last = (m->queue.count == 0);  // 检查队列是否为空
+            trapezoid_update(&m->planner, is_last);   // 更新梯形轨迹
+            // 如果当前轨迹完成且队列中还有新的目标点
+            if (m->planner.is_terminated && m->queue.count > 0) {
+                // 初始化新的梯形轨迹，从当前位置到队列中的下一个目标位置   
+                trapezoid_init(&m->planner, m->planner.current_ref,
+                            queue_pop(&m->queue));
+            }
+            
+            m->planner.current_ref = fmaxf(fminf(m->planner.current_ref, 180.0f), -180.0f);
+            
+            switch (i) {
+                case 0:
+                    m->target_value = -3.2f + debug_current1;
+                    break;
+                case 1:
+                    m->target_value = 6.2923f + debug_current2;
+                    break;
+                case 2:
+                    m->target_value = -60.0574f + debug_current3;
+                    break;
+                case 3:
+                    m->target_value = 0.9413f + debug_current4;
+                    break;
+                case 4:
+                    m->target_value = 57.6267f + debug_current5;
+                    break;                    
+                case 5:
+                    m->target_value = 10.1124f + debug_current6;
+                    break;                                    
+            }
+            handle_mit_motor(m);
+        }
+        // grasper motor control 夹爪接口
+        // MotorInstance* gm = grasper_motor_list[0];
+        // gm->target_value = debug_current7;
+        // handle_kegu_motor(gm);
+    
+    // 20Hz debug logging
+    // static uint32_t t_counter = 0;
+    // if (t_counter % 25 == 0) {
+    //     if (debug_counter < 599) {
+    //         debug_buffer[debug_counter] = joint_motor_list[4]->planner.current_ref;
+    //         real_buffer[debug_counter] = debug_position;
+    //         debug_counter++;
+    //     }            
+    // }
+    // t_counter = (t_counter + 1) % 50;
+
+    
+}
+
+// Slow loop - 20Hz - Debug logging
+void Rover::robot_arm_slow_loop()
+{
+    if (!arm_initialized) {
+        return;
+    }
+    
+    MotorInstance* can1_motor2 = &motor_instances[0][1];
+    
+    // Debug data logging
+    if(debug_counter < 599) {
+        debug_buffer[debug_counter] = can1_motor2->planner.current_ref;
+        float debug_position = get_motor_position(can1_motor2->can_id, can1_motor2->motor_id);
+        real_buffer[debug_counter] = debug_position;
+        debug_counter++;
+    }
+}
+
+
+void Rover::MotorControl_Handler(MotorInstance* motor)
+{
+    // Placeholder - replace with actual motor control implementation
+    // This should send CAN commands to control the motor position
+}
+
+
 void Rover::get_scheduler_tasks(const AP_Scheduler::Task *&tasks,
                                 uint8_t &task_count,
                                 uint32_t &log_bit)
@@ -165,8 +404,20 @@ Rover::Rover(void) :
     logger{g.log_bitmask},
 #endif
     modes(&g.mode1),
-    control_mode(&mode_initializing)
+    control_mode(&mode_initializing),
+    // Robot arm initialization
+    arm_control_counter(0),
+    arm_t_counter(0),
+    arm_current_point(0),
+    arm_initialized(false),
+    debug_counter(0)
 {
+    // Initialize robot arm arrays
+    memset(motor_instances, 0, sizeof(motor_instances));
+    memset(usart1_buf, 0, sizeof(usart1_buf));
+    memset(pos_history, 0, sizeof(pos_history));
+    memset(debug_buffer, 0, sizeof(debug_buffer));
+    memset(real_buffer, 0, sizeof(real_buffer));
 }
 
 #if AP_SCRIPTING_ENABLED

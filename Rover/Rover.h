@@ -22,6 +22,7 @@
 #include <stdint.h>
 
 // Libraries
+#include "MIT_Motor.h"
 #include <AP_Common/AP_Common.h>
 #include <AP_HAL/AP_HAL.h>
 #include <AP_BattMonitor/AP_BattMonitor.h>          // Battery monitor library
@@ -116,6 +117,150 @@ public:
     Rover(void);
 
 private:
+
+    // Robot Arm Control Constants
+    static const uint8_t MAX_CAN_NUM = 2;
+    static const uint8_t MOTORS_PER_CAN = 8;
+    static const uint8_t CTRL_MODE_POSITION = 1;
+    static const uint8_t CTRL_MODE_VELOCITY = 2;
+    static const uint8_t CTRL_MODE_CURRENT = 3;
+    static const uint8_t USART_RX_BUF_LENGHT = 256;
+
+    // Robot Arm Control Structures
+    struct TrapezoidPlanner {
+        float current_ref;
+        float target_pos;
+        float max_velocity;
+        float max_accel;
+        float accel_phase_time;
+        float cruise_phase_time;
+        float decel_phase_time;
+        float total_time;
+        float start_pos;
+        float current_time;
+        bool is_terminated;
+        
+        TrapezoidPlanner() : current_ref(0), target_pos(0), max_velocity(100), max_accel(50),
+                           accel_phase_time(0), cruise_phase_time(0), decel_phase_time(0),
+                           total_time(0), start_pos(0), current_time(0), is_terminated(false) {}
+    };
+
+    struct PositionQueue {
+        static const uint8_t QUEUE_SIZE = 100;
+        float data[QUEUE_SIZE];
+        uint8_t head;
+        uint8_t tail;
+        uint8_t count;
+        
+        PositionQueue() : head(0), tail(0), count(0) {
+            memset(data, 0, sizeof(data));
+        }
+    };
+
+    struct MotorInstance {
+        uint8_t can_id;
+        uint8_t motor_id;
+        bool enabled;
+        uint8_t mode;
+        bool first_command;
+        float target_value;
+        TrapezoidPlanner planner;
+        PositionQueue queue;
+        
+        MotorInstance() : can_id(0), motor_id(0), enabled(false), mode(0),
+                         first_command(true), target_value(0) {}
+    };
+
+    struct JointAngles {
+        float angles[6];
+        
+        JointAngles() {
+            memset(angles, 0, sizeof(angles));
+        }
+    };
+
+    struct Pose {
+        float x, y, z;
+        float roll, pitch, yaw;
+        
+        Pose() : x(0), y(0), z(0), roll(0), pitch(0), yaw(0) {}
+    };
+
+    struct IKSolutions {
+        JointAngles solutions[8];
+        uint8_t count;
+        
+        IKSolutions() : count(0) {}
+    };
+
+    struct RobotArmConfig {
+        float link_lengths[6];
+        float joint_limits[6][2];  // [joint][min/max]
+        char arm_side[2];
+        
+        RobotArmConfig() {
+            memset(link_lengths, 0, sizeof(link_lengths));
+            memset(joint_limits, 0, sizeof(joint_limits));
+            strcpy(arm_side, "L");
+        }
+    };
+
+    // Robot Arm member variables
+    MotorInstance motor_instances[MAX_CAN_NUM][MOTORS_PER_CAN];
+    uint8_t usart1_buf[2][USART_RX_BUF_LENGHT];
+    float pos_history[50];
+    
+    // Predefined joint positions (example data - replace with actual trajectory)
+    static const float predefined_joints[50][6];
+    
+    // Robot arm control state
+    uint32_t arm_control_counter;
+    uint32_t arm_t_counter;
+    uint32_t arm_current_point;
+    bool arm_initialized;
+    
+    // Debug data
+    float debug_buffer[700];
+    float real_buffer[700];
+    uint16_t debug_counter;
+    
+    // Robot arm objects
+    RobotArmConfig left_arm_config;
+    Pose target_pose;
+    JointAngles input_angles;
+    IKSolutions solutions;
+    JointAngles ik_result;
+
+    // Robot arm helper functions
+    void init_robot_arm_config(RobotArmConfig* config, const char* side);
+    bool forward_kinematic(const RobotArmConfig* config, const JointAngles* angles, Pose* pose);
+    bool inverse_kinematic(const RobotArmConfig* config, const Pose* pose, 
+                          const JointAngles* seed, IKSolutions* solutions);
+    bool find_optimal_solution(const RobotArmConfig* config, const IKSolutions* solutions,
+                              const JointAngles* current, const float weights[6], JointAngles* result);
+    
+    // MIT Motor utility functions
+    float normalize_angle(float angle);
+    float circular_diff(float from, float to);
+    
+    // Queue management functions
+    void queue_push(PositionQueue* queue, float value);
+    float queue_pop(PositionQueue* queue);
+    
+    // Trapezoid planner functions
+    void trapezoid_init(TrapezoidPlanner* planner, float start_pos, float target_pos);
+    void trapezoid_update(TrapezoidPlanner* planner, bool is_last);
+    
+    // Motor control functions
+    float get_motor_position(uint8_t can_id, uint8_t motor_id);
+    void MotorControl_Handler(MotorInstance* motor);
+    void usart1_init(uint8_t* buf1, uint8_t* buf2, uint8_t length);
+    
+    // Robot arm initialization and control tasks
+    void robot_arm_init();
+    void robot_arm_fast_loop();    // 500Hz task
+    void robot_arm_control_loop(); // 100Hz task  
+    void robot_arm_slow_loop();    // ~20Hz task for logging
 
     // must be the first AP_Param variable declared to ensure its
     // constructor runs before the constructors of the other AP_Param
@@ -274,7 +419,7 @@ private:
     cruise_learn_t cruise_learn;
 
 private:
-
+    void RobotArmControl();
     // Rover.cpp
 #if AP_SCRIPTING_ENABLED
     bool set_target_location(const Location& target_loc) override;
@@ -444,6 +589,15 @@ public:
     // Simple mode
     float simple_sin_yaw;
 };
+
+// External functions for Tihu motor control
+// These should be implemented in the CAN communication module
+extern "C" {
+    void Tihu_motor_ctrl(uint8_t can_id, uint8_t motor_id, uint8_t cmd, float value);
+    void Tihu_motor_one_byte_ctrl(uint8_t can_id, uint8_t motor_id, uint8_t cmd);
+    // Add SET_ID constant if needed for motor configuration
+    #define SET_ID 5
+}
 
 extern Rover rover;
 

@@ -500,12 +500,12 @@ void AP_DroneCAN::init(uint8_t driver_index, bool enable_filters)
         return;
     }
 
-    hal.util->snprintf(_thread_name, sizeof(_thread_name), "motor_drive_%u", driver_index);
+    // hal.util->snprintf(_thread_name, sizeof(_thread_name), "motor_drive_%u", driver_index);
 
-    if (!hal.scheduler->thread_create(FUNCTOR_BIND_MEMBER(&AP_DroneCAN::motor_can_drive_loop, void), _thread_name, DRONECAN_STACK_SIZE, AP_HAL::Scheduler::PRIORITY_CAN, 0)) {
-        debug_dronecan(AP_CANManager::LOG_ERROR, "Can: couldn't create motor drive thread\n\r");
-        return;
-    }
+    // if (!hal.scheduler->thread_create(FUNCTOR_BIND_MEMBER(&AP_DroneCAN::motor_can_drive_loop, void), _thread_name, DRONECAN_STACK_SIZE, AP_HAL::Scheduler::PRIORITY_CAN, 0)) {
+    //     debug_dronecan(AP_CANManager::LOG_ERROR, "Can: couldn't create motor drive thread\n\r");
+    //     return;
+    // }
 
     if (_wheel_can_id > 0) {
         hal.util->snprintf(_thread_name, sizeof(_thread_name), "wheel_drive_t_%u", driver_index);
@@ -514,6 +514,14 @@ void AP_DroneCAN::init(uint8_t driver_index, bool enable_filters)
             debug_dronecan(AP_CANManager::LOG_ERROR, "Can: couldn't create wheel drive thread\n\r");
             return;
         }
+    }
+
+    // Create robot CAN TX thread for processing motor command queue
+    hal.util->snprintf(_thread_name, sizeof(_thread_name), "robot_tx_%u", driver_index);
+
+    if (!hal.scheduler->thread_create(FUNCTOR_BIND_MEMBER(&AP_DroneCAN::robot_can_tx_loop, void), _thread_name, DRONECAN_STACK_SIZE, AP_HAL::Scheduler::PRIORITY_CAN, 0)) {
+        debug_dronecan(AP_CANManager::LOG_ERROR, "Can: couldn't create robot CAN TX thread\n\r");
+        return;
     }
 
 #if AP_DRONECAN_SERIAL_ENABLED
@@ -1766,6 +1774,8 @@ bool AP_DroneCAN::set_parameter_on_node(uint8_t node_id, const char *name, const
     param_getset_req.name.len = strncpy_noterm((char*)param_getset_req.name.data, name, sizeof(param_getset_req.name.data)-1);
     memcpy(&param_getset_req.value.string_value, (const void*)&value, sizeof(value));
     param_getset_req.value.union_tag = UAVCAN_PROTOCOL_PARAM_VALUE_STRING_VALUE;
+    param_getset_req.value.string_value.len = value.length();
+    memcpy(param_getset_req.value.string_value.data, value.c_str(), value.length());
     param_string_cb = cb;
     param_request_sent = false;
     param_request_sent_ms = AP_HAL::millis();
@@ -2039,6 +2049,67 @@ bool AP_DroneCAN::write_aux_frame(AP_HAL::CANFrame &out_frame, const uint64_t ti
     }
     
     return canard_iface.write_aux_frame(out_frame, timeout_us);
+}
+
+// Robot CAN TX thread loop - processes motor command queue
+void AP_DroneCAN::robot_can_tx_loop(void)
+{
+    while (true) {
+        if (!_initialized) {
+            hal.scheduler->delay_microseconds(1000);
+            continue;
+        }
+
+        // Get the queue singleton
+        CAN_Robot_Tx_Queue* queue = CAN_Robot_Tx_Queue::get_singleton();
+        if (!queue) {
+            hal.scheduler->delay(10);
+            continue;
+        }
+
+        // Process commands from the queue
+        CAN_Robot_Tx_Queue::MotorCommand cmd;
+        if (queue->get_next_command(cmd)) {
+            // Get the CAN frame processor
+            CAN_Robot_Tx_Process* processor = CAN_Robot_Tx_Process::get_singleton();
+            if (processor) {
+                // Process the command and get CAN frame
+                processor->process_motor_command(cmd.can_id, cmd.motor_id, 
+                                              cmd.motor_type, cmd.mode, 
+                                              cmd.target_value);
+                
+                // Create and send CAN frame
+                AP_HAL::CANFrame frame;
+                if (cmd.motor_type == MotorType::MIT) {
+                    frame = create_mit_motor_frame(cmd.can_id, cmd.motor_id, 
+                                                 static_cast<uint8_t>(cmd.mode), 
+                                                 cmd.target_value);
+                } else {
+                    frame = create_kegu_motor_frame(cmd.can_id, cmd.motor_id, 
+                                                  static_cast<uint8_t>(cmd.mode), 
+                                                  cmd.target_value);
+                }
+                
+                // Send frame with 10ms timeout (same as original code)
+                if (!write_aux_frame(frame, 10 * 1000)) {
+                    // Log error if frame couldn't be sent
+                    AP::logger().Write_Error(LogErrorSubsystem::CAN, 
+                                           LogErrorCode::SEND_ERROR);
+                    GCS_SEND_TEXT(MAV_SEVERITY_ERROR, "ROBOT_TX: Failed to send CAN frame ID=0x%X", 
+                                (unsigned)frame.id);
+                } else {
+                    // Log successful transmission
+                    AP::logger().Write_MessageF("ROBOT_TX: CAN_ID=0x%X Type=%s Mode=%u Success",
+                                              (unsigned)frame.id,
+                                              cmd.motor_type == MotorType::MIT ? "MIT" : "KEGU",
+                                              (unsigned)cmd.mode);
+                }
+            }
+        } else {
+            // No commands in queue, sleep for a bit
+            hal.scheduler->delay_microseconds(100);
+        }
+    }
 }
 
 #endif // HAL_NUM_CAN_IFACES
