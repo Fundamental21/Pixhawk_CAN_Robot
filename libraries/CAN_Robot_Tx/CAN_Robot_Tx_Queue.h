@@ -16,14 +16,14 @@
 #define KEGU_CMD_CURRENT        0x04
 #define KEGU_CMD_POSITION       0x05
 
-// Motor types
-typedef enum {
-    MOTOR_TYPE_MIT = 0,
-    MOTOR_TYPE_KEGU = 1
-} MotorType;
+// Motor types - using enum class to match CAN_Robot_Tx_Process.h
+enum class MotorType : uint8_t {
+    MIT = 0,
+    KEGU = 1
+};
 
-// Control modes
-typedef enum {
+// Control modes - using enum class to match CAN_Robot_Tx_Process.h
+enum class MotorControlMode : uint8_t {
     CTRL_MODE_POSITION = 0,
     CTRL_MODE_VELOCITY = 1,
     CTRL_MODE_CURRENT = 2,
@@ -31,7 +31,17 @@ typedef enum {
     CTRL_MODE_ENABLE_CUR = 4,
     CTRL_MODE_ENABLE_POS = 5,
     CTRL_MODE_MAX = 6
-} MotorControlMode;
+};
+
+// Compatibility aliases for existing code
+#define MOTOR_TYPE_MIT MotorType::MIT
+#define MOTOR_TYPE_KEGU MotorType::KEGU
+#define CTRL_MODE_POSITION MotorControlMode::CTRL_MODE_POSITION
+#define CTRL_MODE_VELOCITY MotorControlMode::CTRL_MODE_VELOCITY
+#define CTRL_MODE_CURRENT MotorControlMode::CTRL_MODE_CURRENT
+#define CTRL_MODE_INIT MotorControlMode::CTRL_MODE_INIT
+#define CTRL_MODE_ENABLE_CUR MotorControlMode::CTRL_MODE_ENABLE_CUR
+#define CTRL_MODE_ENABLE_POS MotorControlMode::CTRL_MODE_ENABLE_POS
 
 class CAN_Robot_Tx_Queue {
 public:

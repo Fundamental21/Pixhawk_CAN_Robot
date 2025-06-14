@@ -524,6 +524,10 @@ void AP_DroneCAN::init(uint8_t driver_index, bool enable_filters)
         return;
     }
 
+    // Initialize CAN Robot TX Process singleton
+    CAN_Robot_Tx_Process::init();
+    debug_dronecan(AP_CANManager::LOG_INFO, "CAN Robot TX Process initialized\n\r");
+
 #if AP_DRONECAN_SERIAL_ENABLED
     serial.init(this);
 #endif
@@ -2070,45 +2074,44 @@ void AP_DroneCAN::robot_can_tx_loop(void)
         // Process commands from the queue
         CAN_Robot_Tx_Queue::MotorCommand cmd;
         if (queue->get_next_command(cmd)) {
-            // Get the CAN frame processor
-            CAN_Robot_Tx_Process* processor = CAN_Robot_Tx_Process::get_singleton();
-            if (processor) {
-                // Process the command and get CAN frame
-                processor->process_motor_command(cmd.can_id, cmd.motor_id, 
-                                              cmd.motor_type, cmd.mode, 
-                                              cmd.target_value);
-                
-                // Create and send CAN frame
-                AP_HAL::CANFrame frame;
-                if (cmd.motor_type == MotorType::MIT) {
-                    frame = create_mit_motor_frame(cmd.can_id, cmd.motor_id, 
-                                                 static_cast<uint8_t>(cmd.mode), 
-                                                 cmd.target_value);
-                } else {
-                    frame = create_kegu_motor_frame(cmd.can_id, cmd.motor_id, 
-                                                  static_cast<uint8_t>(cmd.mode), 
-                                                  cmd.target_value);
-                }
-                
-                // Send frame with 10ms timeout (same as original code)
-                if (!write_aux_frame(frame, 10 * 1000)) {
-                    // Log error if frame couldn't be sent
-                    AP::logger().Write_Error(LogErrorSubsystem::CAN, 
-                                           LogErrorCode::SEND_ERROR);
-                    GCS_SEND_TEXT(MAV_SEVERITY_ERROR, "ROBOT_TX: Failed to send CAN frame ID=0x%X", 
-                                (unsigned)frame.id);
-                } else {
+            // Create CAN frame using unified method
+            AP_HAL::CANFrame frame = CAN_Robot_Tx_Process::create_motor_frame(
+                cmd.can_id, 
+                cmd.motor_id, 
+                cmd.motor_type, 
+                cmd.mode, 
+                cmd.target_value
+            );
+            
+            // Send the frame if it was created successfully
+            if (frame.dlc > 0) {
+                if (write_aux_frame(frame, 10 * 1000)) {
+                    // Mark command as processed only if sent successfully
+                    queue->mark_command_processed();
+                    
                     // Log successful transmission
-                    AP::logger().Write_MessageF("ROBOT_TX: CAN_ID=0x%X Type=%s Mode=%u Success",
-                                              (unsigned)frame.id,
-                                              cmd.motor_type == MotorType::MIT ? "MIT" : "KEGU",
-                                              (unsigned)cmd.mode);
+                    debug_dronecan(AP_CANManager::LOG_DEBUG, 
+                                 "Robot CAN TX: ID=0x%X Mode=%u Value=%.2f\\n", 
+                                 (unsigned)cmd.can_id, (unsigned)cmd.mode, (double)cmd.target_value);
+                } else {
+                    // Log transmission failure
+                    debug_dronecan(AP_CANManager::LOG_ERROR, 
+                                 "Robot CAN TX failed: ID=0x%X\\n", (unsigned)cmd.can_id);
                 }
+            } else {
+                // Invalid frame - mark as processed to avoid infinite loop
+                queue->mark_command_processed();
+                debug_dronecan(AP_CANManager::LOG_ERROR, 
+                             "Invalid motor frame: Type=%u Mode=%u\\n", 
+                             (unsigned)cmd.motor_type, (unsigned)cmd.mode);
             }
         } else {
             // No commands in queue, sleep for a bit
             hal.scheduler->delay_microseconds(100);
         }
+        
+        // Log queue status periodically
+        queue->log_status();
     }
 }
 

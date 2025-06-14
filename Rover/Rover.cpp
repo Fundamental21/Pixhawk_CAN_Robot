@@ -31,6 +31,13 @@
 
 #include "Rover.h"
 
+// Include MIT Motor for robot arm control
+#include "MIT_Motor.h"
+
+// Include CAN Robot Rx modules
+#include <CAN_Robot_Rx/CAN_Robot_Rx_Queue.h>
+#include <CAN_Robot_Rx/CAN_Robot_Rx_Process.h>
+
 #define FORCE_VERSION_H_INCLUDE
 #include "version.h"
 #undef FORCE_VERSION_H_INCLUDE
@@ -70,10 +77,10 @@ SCHED_TASK_CLASS arguments:
  */
 const AP_Scheduler::Task Rover::scheduler_tasks[] = {
     //         Function name,          Hz,     us,
-    SCHED_TASK(robot_arm_fast_loop,   400,    100,   1),  // 400Hz fast loop for main arm logic
-    SCHED_TASK(robot_arm_control_loop,100,    200,   2),  // 100Hz control loop  
-    SCHED_TASK(robot_arm_slow_loop,    20,    100,   3),  // 20Hz for logging
-    SCHED_TASK(read_radio,             50,    200,   4),
+
+    SCHED_TASK(robot_arm_control_loop,100,    200,   1),  // 100Hz control loop  
+    // SCHED_TASK(robot_arm_interpolation_loop,   10,    200,   2),  // 400Hz fast loop for main arm logic
+    SCHED_TASK(read_radio,             50,    200,   3),
     SCHED_TASK(ahrs_update,           400,    400,   6),
     SCHED_TASK(read_rangefinders,      50,    200,   9),
 #if AP_OPTICALFLOW_ENABLED
@@ -281,7 +288,10 @@ void Rover::robot_arm_control_loop()
         return;
     }
 
-  // 500Hz trajectory generation
+    // Process CAN Rx messages first
+    process_can_rx_messages();
+
+    // 500Hz trajectory generation
     if (arm_current_point < 50) {
         // get target parameters
         memcpy(input_angles.angles, predefined_joints[arm_current_point], sizeof(predefined_joints[arm_current_point]));
@@ -289,63 +299,64 @@ void Rover::robot_arm_control_loop()
         for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
             MotorInstance* m = joint_motor_list[i];
             float motor_pos = input_angles.angles[i] * (180.0f / M_PI);
-            queue_push(&m->queue, motor_pos);
+            MIT_Motor::queue_push(&m->queue, motor_pos);
         }
         arm_current_point++; 
     }  
 
     // 100hz motor control
-        static bool all_terminated = true; // check all motor has finished motion
-        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
-            MotorInstance* m = joint_motor_list[i];
-            // 读取当前电机位置
-            float current_pos = get_motor_position(m->can_id, m->motor_id, m->type);
-            
-            // 如果是第一次命令且队列中有数据
-            if (m->first_command && m->queue.count > 0) {
-                // 初始化梯形轨迹规划器，从当前位置到队列中的第一个目标位置
-                trapezoid_init(&m->planner, current_pos, queue_pop(&m->queue));
-                m->first_command = false;
-            }
-
-            bool is_last = (m->queue.count == 0);  // 检查队列是否为空
-            trapezoid_update(&m->planner, is_last);   // 更新梯形轨迹
-            // 如果当前轨迹完成且队列中还有新的目标点
-            if (m->planner.is_terminated && m->queue.count > 0) {
-                // 初始化新的梯形轨迹，从当前位置到队列中的下一个目标位置   
-                trapezoid_init(&m->planner, m->planner.current_ref,
-                            queue_pop(&m->queue));
-            }
-            
-            m->planner.current_ref = fmaxf(fminf(m->planner.current_ref, 180.0f), -180.0f);
-            
-            switch (i) {
-                case 0:
-                    m->target_value = -3.2f + debug_current1;
-                    break;
-                case 1:
-                    m->target_value = 6.2923f + debug_current2;
-                    break;
-                case 2:
-                    m->target_value = -60.0574f + debug_current3;
-                    break;
-                case 3:
-                    m->target_value = 0.9413f + debug_current4;
-                    break;
-                case 4:
-                    m->target_value = 57.6267f + debug_current5;
-                    break;                    
-                case 5:
-                    m->target_value = 10.1124f + debug_current6;
-                    break;                                    
-            }
-            handle_mit_motor(m);
+    static bool all_terminated = true; // check all motor has finished motion
+    for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
+        MotorInstance* m = joint_motor_list[i];
+        // 读取当前电机位置
+        float current_pos = MIT_Motor::get_motor_position(m->can_id, m->motor_id);
+        
+        // 如果是第一次命令且队列中有数据
+        if (m->first_command && m->queue.count > 0) {
+            // 初始化梯形轨迹规划器，从当前位置到队列中的第一个目标位置
+            MIT_Motor::trapezoid_init(&m->planner, current_pos, MIT_Motor::queue_pop(&m->queue));
+            m->first_command = false;
         }
-        // grasper motor control 夹爪接口
-        // MotorInstance* gm = grasper_motor_list[0];
-        // gm->target_value = debug_current7;
-        // handle_kegu_motor(gm);
-    
+
+        bool is_last = (m->queue.count == 0);  // 检查队列是否为空
+        MIT_Motor::trapezoid_update(&m->planner, is_last);   // 更新梯形轨迹
+        // 如果当前轨迹完成且队列中还有新的目标点
+        if (m->planner.is_terminated && m->queue.count > 0) {
+            // 初始化新的梯形轨迹，从当前位置到队列中的下一个目标位置   
+            MIT_Motor::trapezoid_init(&m->planner, m->planner.current_ref,
+                        MIT_Motor::queue_pop(&m->queue));
+        }
+        
+        m->planner.current_ref = fmaxf(fminf(m->planner.current_ref, 180.0f), -180.0f);
+        
+        switch (i) {
+            case 0:
+                m->target_value = -3.2f + debug_current1;
+                break;
+            case 1:
+                m->target_value = 6.2923f + debug_current2;
+                break;
+            case 2:
+                m->target_value = -60.0574f + debug_current3;
+                break;
+            case 3:
+                m->target_value = 0.9413f + debug_current4;
+                break;
+            case 4:
+                m->target_value = 57.6267f + debug_current5;
+                break;                    
+            case 5:
+                m->target_value = 10.1124f + debug_current6;
+                break;                                    
+        }
+        // 调用MIT_Motor命名空间中的函数，而不是Rover的空函数
+        MIT_Motor::MotorControl_Handler(m);
+    }
+    // grasper motor control 夹爪接口
+    // MotorInstance* gm = grasper_motor_list[0];
+    // gm->target_value = debug_current7;
+    // handle_kegu_motor(gm);
+
     // 20Hz debug logging
     // static uint32_t t_counter = 0;
     // if (t_counter % 25 == 0) {
@@ -356,34 +367,27 @@ void Rover::robot_arm_control_loop()
     //     }            
     // }
     // t_counter = (t_counter + 1) % 50;
-
-    
 }
 
-// Slow loop - 20Hz - Debug logging
-void Rover::robot_arm_slow_loop()
+// CAN Rx message processing function - called from robot_arm_control_loop
+void Rover::process_can_rx_messages()
 {
-    if (!arm_initialized) {
-        return;
+    // Initialize CAN Rx modules if not already done
+    static bool rx_initialized = false;
+    if (!rx_initialized) {
+        CAN_Robot_Rx_Queue::init();
+        CAN_Robot_Rx_Process::init();
+        rx_initialized = true;
     }
     
-    MotorInstance* can1_motor2 = &motor_instances[0][1];
-    
-    // Debug data logging
-    if(debug_counter < 599) {
-        debug_buffer[debug_counter] = can1_motor2->planner.current_ref;
-        float debug_position = get_motor_position(can1_motor2->can_id, can1_motor2->motor_id);
-        real_buffer[debug_counter] = debug_position;
-        debug_counter++;
+    // Process all messages from the queue using Rx processor
+    CAN_Robot_Rx_Process* rx_processor = CAN_Robot_Rx_Process::get_singleton();
+    if (rx_processor != nullptr) {
+        rx_processor->process_all_rx_messages();
     }
 }
 
 
-void Rover::MotorControl_Handler(MotorInstance* motor)
-{
-    // Placeholder - replace with actual motor control implementation
-    // This should send CAN commands to control the motor position
-}
 
 
 void Rover::get_scheduler_tasks(const AP_Scheduler::Task *&tasks,

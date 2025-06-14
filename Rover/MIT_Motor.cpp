@@ -135,40 +135,21 @@ void MotorControl_Handler(MotorInstance* motor)
         return;
     }
 
-    // Convert control mode to queue mode
-    MotorControlMode queue_mode;
-    switch(motor->mode) {
-        case CTRL_MODE_POSITION:
-            queue_mode = CTRL_MODE_POSITION;
-            break;
-        case CTRL_MODE_VELOCITY:
-            queue_mode = CTRL_MODE_VELOCITY;
-            break;
-        case CTRL_MODE_CURRENT:
-            queue_mode = CTRL_MODE_CURRENT;
-            break;
-        case CTRL_MODE_INIT:
-            queue_mode = CTRL_MODE_INIT;
-            break;
-        case CTRL_MODE_ENABLE_CUR:
-            queue_mode = CTRL_MODE_ENABLE_CUR;
-            break;
-        default:
-            return;
-    }
+    // Convert control mode to queue mode (both use same enum values)
+    MotorControlMode queue_mode = motor->mode;
 
     // Queue the command
     queue->queue_motor_command(motor->can_id, motor->motor_id, 
-                             motor->type == MOTOR_TYPE_MIT ? MotorType::MIT : MotorType::KEGU,
+                             motor->type == MOTOR_TYPE_MIT ? MOTOR_TYPE_MIT : MOTOR_TYPE_KEGU,
                              queue_mode, motor->target_value);
     
     // Request motor status
     if (motor->type == MOTOR_TYPE_MIT) {
-        queue->queue_motor_command(motor->can_id, motor->motor_id, MotorType::MIT,
+        queue->queue_motor_command(motor->can_id, motor->motor_id, MOTOR_TYPE_MIT,
                                  CTRL_MODE_CURRENT, 0); // get current
-        queue->queue_motor_command(motor->can_id, motor->motor_id, MotorType::MIT,
+        queue->queue_motor_command(motor->can_id, motor->motor_id, MOTOR_TYPE_MIT,
                                  CTRL_MODE_VELOCITY, 0); // get velocity
-        queue->queue_motor_command(motor->can_id, motor->motor_id, MotorType::MIT,
+        queue->queue_motor_command(motor->can_id, motor->motor_id, MOTOR_TYPE_MIT,
                                  CTRL_MODE_POSITION, 0); // get position
     }
 }

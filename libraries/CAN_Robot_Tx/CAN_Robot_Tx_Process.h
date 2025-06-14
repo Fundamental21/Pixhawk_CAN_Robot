@@ -74,18 +74,17 @@ AP_HAL::CANFrame create_kegu_motor_frame(uint8_t can_id, uint8_t motor_id, uint8
 // Singleton instance
 class CAN_Robot_Tx_Process {
 public:
-    static CAN_Robot_Tx_Process *get_singleton() {
-        return _singleton;
-    }
+    static void init(void);
+    static CAN_Robot_Tx_Process* get_singleton(void) { return _singleton; }
 
-    // Initialize the processor
-    void init(void);
-    
-    // Process incoming motor commands
     void process_motor_command(uint8_t can_id, uint8_t motor_id, MotorType type, 
                              MotorCtrlMode mode, float value);
 
-    // Get motor status
+    // New method: Create CAN frame from motor command
+    static AP_HAL::CANFrame create_motor_frame(uint8_t can_id, uint8_t motor_id, 
+                                              MotorType motor_type, MotorCtrlMode mode, 
+                                              float target_value);
+
     const Mit_Motor_Status& get_mit_status() const { return _mit_status; }
     const KeGu_Motor_Status& get_kegu_status() const { return _kegu_status; }
 

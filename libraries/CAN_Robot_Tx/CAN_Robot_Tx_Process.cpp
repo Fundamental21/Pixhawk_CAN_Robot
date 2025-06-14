@@ -32,19 +32,19 @@ static const uint16_t VALID_ONE_BYTE_CMDS[] = {
     0x06,  // get motor speed
     0x07,  // get motor target speed
     0x08,  // get motor position
-		0x14,  // get bus voltage
-		0x17,  // get max accel
-		0x18,  // get max velocity
+	0x14,  // get bus voltage
+	0x17,  // get max accel
+	0x18,  // get max velocity
     0x31,  // get motor temperature
     0x32,  // get board temperature
-		0x54,  // get encoder offset
-		0x65,  // get motor version
-		0x66,  // get motor soft version
-		0x0A,  // get motor errors
-		0x0B,  // eliminate errors
-		0x0D,  // get parameters from flash
+	0x54,  // get encoder offset
+	0x65,  // get motor version
+	0x66,  // get motor soft version
+	0x0A,  // get motor errors
+	0x0B,  // eliminate errors
+	0x0D,  // get parameters from flash
     0x0E,  // save to flash
-	  0x0F,  // restore factory settings
+	0x0F,  // restore factory settings
 };
 
 static const MotorDataParserConfig parser_configs[] = {
@@ -388,6 +388,53 @@ void CAN_Robot_Tx_Process::init(void)
     memset(&_kegu_status, 0, sizeof(_kegu_status));
 }
 
+// Create CAN frame from motor command (unified method)
+AP_HAL::CANFrame CAN_Robot_Tx_Process::create_motor_frame(uint8_t can_id, uint8_t motor_id, 
+                                                         MotorType motor_type, MotorControlMode mode, 
+                                                         float target_value)
+{
+    AP_HAL::CANFrame frame;
+    
+    if (motor_type == MotorType::MIT) {
+        switch (mode) {
+            case MotorControlMode::CTRL_MODE_POSITION:
+                frame = create_mit_motor_frame(can_id, motor_id, MIT_CMD_POSITION, target_value);
+                break;
+            case MotorControlMode::CTRL_MODE_VELOCITY:
+                frame = create_mit_motor_frame(can_id, motor_id, MIT_CMD_SPEED, target_value);
+                break;
+            case MotorControlMode::CTRL_MODE_CURRENT:
+                frame = create_mit_motor_frame(can_id, motor_id, MIT_CMD_CURRENT, target_value);
+                break;
+            default:
+                // Return empty frame for unsupported modes
+                memset(&frame, 0, sizeof(frame));
+                break;
+        }
+    } else if (motor_type == MotorType::KEGU) {
+        switch (mode) {
+            case MotorControlMode::CTRL_MODE_INIT:
+                frame = create_kegu_motor_frame(can_id, motor_id, KEGU_CMD_INIT, target_value);
+                break;
+            case MotorControlMode::CTRL_MODE_ENABLE_CUR:
+                frame = create_kegu_motor_frame(can_id, motor_id, KEGU_CMD_ENABLE_CUR, target_value);
+                break;
+            case MotorControlMode::CTRL_MODE_CURRENT:
+                frame = create_kegu_motor_frame(can_id, motor_id, KEGU_CMD_SET_CUR, target_value);
+                break;
+            default:
+                // Return empty frame for unsupported modes
+                memset(&frame, 0, sizeof(frame));
+                break;
+        }
+    } else {
+        // Return empty frame for unsupported motor types
+        memset(&frame, 0, sizeof(frame));
+    }
+    
+    return frame;
+}
+
 // Process motor commands and create CAN frames
 void CAN_Robot_Tx_Process::process_motor_command(uint8_t can_id, uint8_t motor_id, 
                                                MotorType type, MotorCtrlMode mode, 
@@ -399,13 +446,13 @@ void CAN_Robot_Tx_Process::process_motor_command(uint8_t can_id, uint8_t motor_i
         case MotorType::MIT:
             switch (mode) {
                 case MotorCtrlMode::POSITION:
-                    frame = create_mit_motor_frame(can_id, motor_id, MIT_CMD_POSITION, value);
+                    frame = create_motor_frame(can_id, motor_id, type, mode, value);
                     break;
                 case MotorCtrlMode::SPEED:
-                    frame = create_mit_motor_frame(can_id, motor_id, MIT_CMD_SPEED, value);
+                    frame = create_motor_frame(can_id, motor_id, type, mode, value);
                     break;
                 case MotorCtrlMode::CURRENT:
-                    frame = create_mit_motor_frame(can_id, motor_id, MIT_CMD_CURRENT, value);
+                    frame = create_motor_frame(can_id, motor_id, type, mode, value);
                     break;
                 default:
                     return;
@@ -415,13 +462,13 @@ void CAN_Robot_Tx_Process::process_motor_command(uint8_t can_id, uint8_t motor_i
         case MotorType::KEGU:
             switch (mode) {
                 case MotorCtrlMode::SET_INIT:
-                    frame = create_kegu_motor_frame(can_id, motor_id, KEGU_CMD_INIT, value);
+                    frame = create_motor_frame(can_id, motor_id, type, mode, value);
                     break;
                 case MotorCtrlMode::SET_CUR_ENABLE:
-                    frame = create_kegu_motor_frame(can_id, motor_id, KEGU_CMD_ENABLE_CUR, value);
+                    frame = create_motor_frame(can_id, motor_id, type, mode, value);
                     break;
                 case MotorCtrlMode::CURRENT:
-                    frame = create_kegu_motor_frame(can_id, motor_id, KEGU_CMD_SET_CUR, value);
+                    frame = create_motor_frame(can_id, motor_id, type, mode, value);
                     break;
                 default:
                     return;

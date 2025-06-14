@@ -7,6 +7,7 @@
 #include <AP_Math/AP_Math.h>
 #include <dronecan_msgs.h>
 #include <AP_WheelEncoder/AP_Hall_Can_Backend.h>
+#include <CAN_Robot_Rx/CAN_Robot_Rx_Queue.h>
 extern const AP_HAL::HAL& hal;
 #define LOG_TAG "DroneCANIface"
 #include <canard.h>
@@ -360,6 +361,18 @@ void CanardInterface::processRx() {
                 Hall_Can_Backend* hall_backend = Hall_Can_Backend::get_singleton();
                 if (hall_backend != nullptr) {
                     hall_backend->handle_frame(rxmsg);  // handle rxmsg from CAN1 or CAN2
+                }
+
+                // Push CAN message to robot rx queue - 区分不同CAN口
+                CAN_Robot_Rx_Queue* rx_queue = CAN_Robot_Rx_Queue::get_singleton();
+                if (rx_queue != nullptr) {
+                    CAN_Robot_Rx_Queue::CANRxMessage can_msg;
+                    can_msg.can_id = rxmsg.id;
+                    can_msg.can_channel = i;  // i=0为CAN1, i=1为CAN2
+                    can_msg.dlc = AP_HAL::CANFrame::dlcToDataLength(rxmsg.dlc);
+                    memcpy(can_msg.data, rxmsg.data, can_msg.dlc);
+                    can_msg.timestamp_us = timestamp;
+                    rx_queue->push_message(can_msg);
                 }
                 
                 continue;

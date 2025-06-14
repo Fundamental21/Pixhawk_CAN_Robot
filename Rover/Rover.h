@@ -261,6 +261,7 @@ private:
     void robot_arm_fast_loop();    // 500Hz task
     void robot_arm_control_loop(); // 100Hz task  
     void robot_arm_slow_loop();    // ~20Hz task for logging
+    void process_can_rx_messages(); // CAN Rx message processing
 
     // must be the first AP_Param variable declared to ensure its
     // constructor runs before the constructors of the other AP_Param

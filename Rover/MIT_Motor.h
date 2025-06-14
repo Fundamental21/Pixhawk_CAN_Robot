@@ -22,6 +22,10 @@
 #include <stdint.h>
 #include <cmath>
 
+// Include CAN Robot TX Queue for motor commands
+
+#include <CAN_Robot_Tx/CAN_Robot_Tx_Queue.h>
+
 // Constants from MIT_MotorV0.h
 #define USART_RX_BUF_LENGHT     128
 #define USART1_RX_BUF_LENGHT    9
@@ -44,6 +48,7 @@
 typedef struct {
     float angles[6];
 } JointAngles;
+
 // Structures from MIT_MotorV0.h with C++ compatibility
 typedef struct {
     float current_ref; 
@@ -65,8 +70,16 @@ typedef enum {
     CTRL_MODE_POSITION,
     CTRL_MODE_VELOCITY, 
     CTRL_MODE_CURRENT,
+    CTRL_MODE_INIT,
+    CTRL_MODE_ENABLE_CUR,
+    CTRL_MODE_ENABLE_POS,
     CTRL_MODE_MAX
 } MotorControlMode;
+
+typedef enum {
+    MOTOR_TYPE_MIT = 0,
+    MOTOR_TYPE_KEGU = 1
+} MotorType;
 
 typedef struct {
     // id
@@ -81,6 +94,7 @@ typedef struct {
     // motor state
     bool enabled;
     bool first_command;
+    MotorType type;  // Add motor type field
 	
     // position queue
     PositionQueue queue;
