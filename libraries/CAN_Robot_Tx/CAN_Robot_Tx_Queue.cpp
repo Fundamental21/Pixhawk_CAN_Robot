@@ -2,8 +2,16 @@
 #include "CAN_Robot_Tx_Queue.h"
 #include <new>
 
-// Singleton instance
-CAN_Robot_Tx_Queue* CAN_Robot_Tx_Queue::_singleton = new (std::nothrow) CAN_Robot_Tx_Queue();
+// 单例实例 - 初始化为空指针，延迟初始化
+CAN_Robot_Tx_Queue* CAN_Robot_Tx_Queue::_singleton = nullptr;
+
+// 初始化静态实例 - 与Rx队列保持一致
+void CAN_Robot_Tx_Queue::init(void)
+{
+    if (_singleton == nullptr) {
+        _singleton = new (std::nothrow) CAN_Robot_Tx_Queue();
+    }
+}
 
 CAN_Robot_Tx_Queue::CAN_Robot_Tx_Queue() :
     _queue_head(0),
@@ -132,7 +140,7 @@ void CAN_Robot_Tx_Queue::_advance_tail(void)
 }
 
 // Helper functions for motor control (called from MIT_Motor.cpp)
-void handle_mit_motor(struct MotorInstance* motor)
+void handle_mit_motor(MotorInstance* motor)
 {
     if (!motor || !motor->enabled) {
         return;
@@ -148,7 +156,7 @@ void handle_mit_motor(struct MotorInstance* motor)
                               motor->mode, motor->target_value);
 }
 
-void handle_kegu_motor(struct MotorInstance* motor)
+void handle_kegu_motor(MotorInstance* motor)
 {
     if (!motor || !motor->enabled) {
         return;

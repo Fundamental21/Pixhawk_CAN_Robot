@@ -328,86 +328,93 @@ void CanardInterface::update_rx_protocol_stats(int16_t res)
     }
 }
 
-void CanardInterface::processRx() {
-    AP_HAL::CANFrame rxmsg;
-    for (uint8_t i=0; i<num_ifaces; i++) {  
-        //0= CAN1, 1=CAN2
-        while(true) {
-            if (ifaces[i] == NULL) {
-                break;
-            }
-            bool read_select = true;
-            bool write_select = false;
-            ifaces[i]->select(read_select, write_select, nullptr, 0);
-            if (!read_select) { // No data pending
-                break;
-            }
-            CanardCANFrame rx_frame {};
+void CanardInterface::processRxFromInterface(uint8_t iface_idx) {
+    if (ifaces[iface_idx] == NULL) {
+        return;
+    }
+    
+    AP_HAL::CANFrame rxmsg;  // 从CAN硬件接收的原始消息
+    while(true) {
+        bool read_select = true;
+        bool write_select = false;
+        ifaces[iface_idx]->select(read_select, write_select, nullptr, 0);
+        if (!read_select) { // No data pending
+            break;
+        }
+        
+        CanardCANFrame rx_frame {};
+        uint64_t timestamp;
+        AP_HAL::CANIface::CanIOFlags flags;
+        
+        if (ifaces[iface_idx]->receive(rxmsg, timestamp, flags) <= 0) {
+            break;
+        }
 
-            //palToggleLine(HAL_GPIO_PIN_LED);
-            uint64_t timestamp;
-            AP_HAL::CANIface::CanIOFlags flags;
-            if (ifaces[i]->receive(rxmsg, timestamp, flags) <= 0) {
-                break;
-            }
-
-            if (!rxmsg.isExtended()) {
-                // 11 bit frame, see if we have a handler
-                if (aux_11bit_driver != nullptr) {
-                    aux_11bit_driver->handle_frame(rxmsg);
-                }
-
-                // Handle frame with Hall CAN Backend if available
-                Hall_Can_Backend* hall_backend = Hall_Can_Backend::get_singleton();
-                if (hall_backend != nullptr) {
-                    hall_backend->handle_frame(rxmsg);  // handle rxmsg from CAN1 or CAN2
-                }
-
-                // Push CAN message to robot rx queue - 区分不同CAN口
-                CAN_Robot_Rx_Queue* rx_queue = CAN_Robot_Rx_Queue::get_singleton();
-                if (rx_queue != nullptr) {
-                    CAN_Robot_Rx_Queue::CANRxMessage can_msg;
-                    can_msg.can_id = rxmsg.id;
-                    can_msg.can_channel = i;  // i=0为CAN1, i=1为CAN2
-                    can_msg.dlc = AP_HAL::CANFrame::dlcToDataLength(rxmsg.dlc);
-                    memcpy(can_msg.data, rxmsg.data, can_msg.dlc);
-                    can_msg.timestamp_us = timestamp;
-                    rx_queue->push_message(can_msg);
-                }
-                
-                continue;
+        // 处理11位标准帧
+        if (!rxmsg.isExtended()) {
+            // 11 bit frame, see if we have a handler
+            if (aux_11bit_driver != nullptr) {
+                aux_11bit_driver->handle_frame(rxmsg);
             }
 
-            rx_frame.data_len = AP_HAL::CANFrame::dlcToDataLength(rxmsg.dlc);
-            memcpy(rx_frame.data, rxmsg.data, rx_frame.data_len);
+            // Handle frame with Hall CAN Backend if available
+            Hall_Can_Backend* hall_backend = Hall_Can_Backend::get_singleton();
+            if (hall_backend != nullptr) {
+                hall_backend->handle_frame(rxmsg);  // handle rxmsg from specific CAN interface
+            }
+
+            // Push CAN message to robot rx queue - 明确标识CAN接口
+            CAN_Robot_Rx_Queue* rx_queue = CAN_Robot_Rx_Queue::get_singleton();
+            if (rx_queue != nullptr) {
+                CAN_Robot_Rx_Queue::CANRxMessage can_msg;   // 队列专用格式
+                can_msg.can_id = rxmsg.id;        // CAN消息ID
+                can_msg.can_channel = iface_idx;  // 明确标识：0=CAN1, 1=CAN2
+                can_msg.dlc = AP_HAL::CANFrame::dlcToDataLength(rxmsg.dlc);  // 数据长度
+                memcpy(can_msg.data, rxmsg.data, can_msg.dlc);  // 数据
+                can_msg.timestamp_us = timestamp;  // 时间戳    
+                rx_queue->push_message(can_msg);
+            }
+            
+            continue;
+        }
+
+        // 处理扩展帧（DroneCAN协议）
+        rx_frame.data_len = AP_HAL::CANFrame::dlcToDataLength(rxmsg.dlc);
+        memcpy(rx_frame.data, rxmsg.data, rx_frame.data_len);
 #if HAL_CANFD_SUPPORTED
-            rx_frame.canfd = rxmsg.canfd;
+        rx_frame.canfd = rxmsg.canfd;
 #endif
-            rx_frame.id = rxmsg.id;
+        rx_frame.id = rxmsg.id;
 #if CANARD_MULTI_IFACE
-            rx_frame.iface_id = i;
+        rx_frame.iface_id = iface_idx;
 #endif
-            {
-                WITH_SEMAPHORE(_sem_rx);
+        {
+            WITH_SEMAPHORE(_sem_rx);
 
-                const int16_t res = canardHandleRxFrame(&canard, &rx_frame, timestamp);
-                if (res == -CANARD_ERROR_RX_MISSED_START) {
-                    // this might remaining frames from a message that we don't accept, so check
-                    uint64_t dummy_signature;
-                    if (shouldAcceptTransfer(&canard,
-                                        &dummy_signature,
-                                        extractDataType(rx_frame.id),
-                                        extractTransferType(rx_frame.id),
-                                        1)) { // doesn't matter what we pass here
-                        update_rx_protocol_stats(res);
-                    } else {
-                        protocol_stats.rx_ignored_not_wanted++;
-                    }
-                } else {
+            const int16_t res = canardHandleRxFrame(&canard, &rx_frame, timestamp);
+            if (res == -CANARD_ERROR_RX_MISSED_START) {
+                // this might remaining frames from a message that we don't accept, so check
+                uint64_t dummy_signature;
+                if (shouldAcceptTransfer(&canard,
+                                    &dummy_signature,
+                                    extractDataType(rx_frame.id),
+                                    extractTransferType(rx_frame.id),
+                                    1)) { // doesn't matter what we pass here
                     update_rx_protocol_stats(res);
+                } else {
+                    protocol_stats.rx_ignored_not_wanted++;
                 }
+            } else {
+                update_rx_protocol_stats(res);
             }
         }
+    }
+}
+
+void CanardInterface::processRx() {
+    // 分别处理每个CAN接口 - 更清晰的架构
+    for (uint8_t i = 0; i < num_ifaces; i++) {
+        processRxFromInterface(i);  // 明确处理第i个CAN接口
     }
 }
 
@@ -478,15 +485,26 @@ bool CanardInterface::add_11bit_driver(CANSensor *sensor)
 }
 
 // handler for outgoing frames for auxillary drivers
+// bool CanardInterface::write_aux_frame(AP_HAL::CANFrame &out_frame, const uint64_t timeout_us)
+// {
+//     bool ret = false;
+//     for (uint8_t iface = 0; iface < num_ifaces; iface++) {
+//         if (ifaces[iface] == NULL) {
+//             continue;
+//         }
+//         ret |= ifaces[iface]->send(out_frame, timeout_us, 0) > 0;
+//     }
+//     return ret;
+// }
 bool CanardInterface::write_aux_frame(AP_HAL::CANFrame &out_frame, const uint64_t timeout_us)
 {
     bool ret = false;
-    for (uint8_t iface = 0; iface < num_ifaces; iface++) {
-        if (ifaces[iface] == NULL) {
-            continue;
-        }
-        ret |= ifaces[iface]->send(out_frame, timeout_us, 0) > 0;
+        
+    if (ifaces[0] == NULL) {
+        return false;
     }
+    ret |= ifaces[0]->send(out_frame, timeout_us, 0) > 0;
+    
     return ret;
 }
 

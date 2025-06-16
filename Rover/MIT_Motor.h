@@ -22,99 +22,14 @@
 #include <stdint.h>
 #include <cmath>
 
-// Include CAN Robot TX Queue for motor commands
-
+// Include CAN Robot common definitions and TX Queue for motor commands
+#include <CAN_Robot_Tx/CAN_Robot_Common.h>
 #include <CAN_Robot_Tx/CAN_Robot_Tx_Queue.h>
 
-// Constants from MIT_MotorV0.h
-#define USART_RX_BUF_LENGHT     128
-#define USART1_RX_BUF_LENGHT    9
-
-#define MAX_CAN_NUM   1     // CAN number 
-#define MOTORS_PER_CAN 8
-#define POSITION_QUEUE_SIZE 50
-#define POSITION_TOLERANCE  0.1f
-#define MAX_VELOCITY     10.0f    // deg/s
-#define MAX_ACCEL        20.0f   // deg/s^2
-#define CONTROL_PERIOD   0.01f    // 10ms
-
-// Motor control constants
-#define POSITION 1
-#define SPEED 2
-#define CURRENT 3
-#define SET_ID 5
-
-// Joint angles structure
-typedef struct {
-    float angles[6];
-} JointAngles;
-
-// Structures from MIT_MotorV0.h with C++ compatibility
-typedef struct {
-    float current_ref; 
-    float current_vel; 
-    float target_pos;
-    float max_velocity;
-    float max_accel;
-    bool  is_terminated;
-} TrapezoidPlanner;
-
-typedef struct {
-    float data[POSITION_QUEUE_SIZE];
-    uint16_t head;
-    uint16_t tail;
-    uint16_t count;
-} PositionQueue;
-
-typedef enum {
-    CTRL_MODE_POSITION,
-    CTRL_MODE_VELOCITY, 
-    CTRL_MODE_CURRENT,
-    CTRL_MODE_INIT,
-    CTRL_MODE_ENABLE_CUR,
-    CTRL_MODE_ENABLE_POS,
-    CTRL_MODE_MAX
-} MotorControlMode;
-
-typedef enum {
-    MOTOR_TYPE_MIT = 0,
-    MOTOR_TYPE_KEGU = 1
-} MotorType;
-
-typedef struct {
-    // id
-    uint8_t can_id;
-    uint8_t motor_id;
-    
-    // control state
-    MotorControlMode mode;
-    float target_value;
-    float last_position;
-    
-    // motor state
-    bool enabled;
-    bool first_command;
-    MotorType type;  // Add motor type field
-	
-    // position queue
-    PositionQueue queue;
-    
-    // interpolation
-    TrapezoidPlanner planner;
-} MotorInstance;
+// All constants and structures now defined in CAN_Robot_Common.h
 
 // Global motor instances array declaration
 extern MotorInstance motor_instances[MAX_CAN_NUM][MOTORS_PER_CAN];
-
-static const uint8_t JOINT_MOTOR_COUNT = 6;
-MotorInstance* joint_motor_list[JOINT_MOTOR_COUNT] = {
-    &motor_instances[0][0],
-    &motor_instances[0][1],
-    &motor_instances[0][2],
-    &motor_instances[0][3],
-    &motor_instances[0][4],
-    &motor_instances[0][5]
-};
 
 // Function declarations from MIT_MotorV0.h
 extern void mit_motor_task (void const* argu);
@@ -147,6 +62,18 @@ namespace MIT_Motor {
     // Motor control functions
     void MotorControl_Handler(MotorInstance* motor);
     float get_motor_position(uint8_t can_id, uint8_t motor_id);
+    float get_motor_current(uint8_t can_id, uint8_t motor_id);
+    float get_motor_velocity(uint8_t can_id, uint8_t motor_id);
+    
+    // Trajectory interpolation functions
+    void init_trajectory_interpolation();
+    bool add_key_point(const float joint_angles[6]);
+    bool add_current_motor_positions();
+    bool get_next_trajectory_point(float joint_angles[6]);
+    bool generate_trajectory_interpolation(float Ts, float F, float ub_a, uint8_t max_points = 0);
+    bool is_dense_queue_empty();
+    bool is_sparse_queue_empty();
+    uint8_t sparse_queue_count();
 }
 #endif
 

@@ -36,10 +36,6 @@
 #include <dronecan_msgs.h>
 #include <AP_SerialManager/AP_SerialManager_config.h>
 #include <AP_Relay/AP_Relay_config.h>
-#include <CAN_Robot_Tx/CAN_Robot_Tx_Queue.h>
-
-// Include CAN Robot TX components
-#include <CAN_Robot_Tx/CAN_Robot_Tx_Process.h>
 
 #ifndef DRONECAN_SRV_NUMBER
 #define DRONECAN_SRV_NUMBER NUM_SERVO_CHANNELS

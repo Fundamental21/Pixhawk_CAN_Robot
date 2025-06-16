@@ -53,6 +53,13 @@
 
 #include <AP_WheelEncoder/AP_Hall_Can_Backend.h>
 
+// Define flag to prevent macro conflicts with AP_DroneCAN enums
+#define AP_DRONECAN_INCLUDED
+
+// Include CAN Robot modules for robot_can_tx_loop
+#include <CAN_Robot_Tx/CAN_Robot_Tx_Queue.h>
+#include <CAN_Robot_Tx/CAN_Robot_Tx_Process.h>
+
 #if AP_DRONECAN_SERIAL_ENABLED
 #include "AP_DroneCAN_serial.h"
 #endif
@@ -104,7 +111,6 @@ const AP_Param::GroupInfo AP_DroneCAN::var_info[] = {
     // @DisplayName: Output channels to be transmitted as servo over DroneCAN
     // @Description: Bitmask with one set for channel to be transmitted as a servo command over DroneCAN
     // @Bitmask: 0: Servo 1, 1: Servo 2, 2: Servo 3, 3: Servo 4, 4: Servo 5, 5: Servo 6, 6: Servo 7, 7: Servo 8, 8: Servo 9, 9: Servo 10, 10: Servo 11, 11: Servo 12, 12: Servo 13, 13: Servo 14, 14: Servo 15, 15: Servo 16, 16: Servo 17, 17: Servo 18, 18: Servo 19, 19: Servo 20, 20: Servo 21, 21: Servo 22, 22: Servo 23, 23: Servo 24, 24: Servo 25, 25: Servo 26, 26: Servo 27, 27: Servo 28, 28: Servo 29, 29: Servo 30, 30: Servo 31, 31: Servo 32
-
     // @User: Advanced
     AP_GROUPINFO("SRV_BM", 2, AP_DroneCAN, _servo_bm, 0),
 
@@ -524,9 +530,6 @@ void AP_DroneCAN::init(uint8_t driver_index, bool enable_filters)
         return;
     }
 
-    // Initialize CAN Robot TX Process singleton
-    CAN_Robot_Tx_Process::init();
-    debug_dronecan(AP_CANManager::LOG_INFO, "CAN Robot TX Process initialized\n\r");
 
 #if AP_DRONECAN_SERIAL_ENABLED
     serial.init(this);
@@ -1778,8 +1781,8 @@ bool AP_DroneCAN::set_parameter_on_node(uint8_t node_id, const char *name, const
     param_getset_req.name.len = strncpy_noterm((char*)param_getset_req.name.data, name, sizeof(param_getset_req.name.data)-1);
     memcpy(&param_getset_req.value.string_value, (const void*)&value, sizeof(value));
     param_getset_req.value.union_tag = UAVCAN_PROTOCOL_PARAM_VALUE_STRING_VALUE;
-    param_getset_req.value.string_value.len = value.length();
-    memcpy(param_getset_req.value.string_value.data, value.c_str(), value.length());
+    param_getset_req.value.string_value.len = value.len;
+    memcpy(param_getset_req.value.string_value.data, value.data, value.len);
     param_string_cb = cb;
     param_request_sent = false;
     param_request_sent_ms = AP_HAL::millis();

@@ -14,6 +14,11 @@
 */
 
 #include "MIT_Motor.h"
+#include <CAN_Robot_interpolation/CAN_Robot_interpolation.h>
+
+// Include CAN Robot Rx modules to access received motor status
+#include <CAN_Robot_Rx/CAN_Robot_Rx_Queue.h>
+#include <CAN_Robot_Rx/CAN_Robot_Rx_Process.h>
 
 // ArduPilot includes (conditional, only if building within ArduPilot)
 #ifdef ARDUPILOT_BUILD
@@ -32,7 +37,8 @@ MotorInstance motor_instances[MAX_CAN_NUM][MOTORS_PER_CAN] = {
     },
     // CAN2
     [1] = {
-        {.can_id=2, .motor_id=1}
+        {.can_id=2, .motor_id=1}, {.can_id=2, .motor_id=2}, {.can_id=2, .motor_id=3}, {.can_id=2, .motor_id=4},
+        {.can_id=2, .motor_id=5}, {.can_id=2, .motor_id=6}, {.can_id=2, .motor_id=7}, {.can_id=2, .motor_id=8}
     }
 };
 
@@ -155,13 +161,228 @@ void MotorControl_Handler(MotorInstance* motor)
 }
 //---------------------Motor Control Handler---------------------
 
-// Motor position getter function - requires implementation of CAN communication
+// Motor position getter function - gets MIT motor position from CAN1 Rx queue
 float get_motor_position(uint8_t can_id, uint8_t motor_id)
 {
-    // This function should return the current motor position
-    // Implementation depends on the actual CAN communication protocol
-    // For now, return 0 as placeholder
-    return 0.0f;
+    // Get the CAN Rx processor singleton
+    CAN_Robot_Rx_Process* rx_processor = CAN_Robot_Rx_Process::get_singleton();
+    if (!rx_processor) {
+        return NAN;  // Return NAN to indicate no valid data
+    }
+    
+    // Only process CAN1 messages (channel 0 is CAN1 for motor)
+    uint8_t can_channel = 0;  // CAN1
+    
+    // Get MIT motor status from CAN1
+    const CAN_Robot_Rx_Process::MIT_Motor_Feedback& motor_feedback = 
+        rx_processor->get_mit_motor_status(can_channel, motor_id);
+    
+    // Check if we have valid data
+    if (motor_feedback.last_update_us > 0) {
+        return motor_feedback.position;  // Return position in degrees
+    }
+    
+    /* KEGU Motor interface (reserved for future use)
+    const CAN_Robot_Rx_Process::KEGU_Motor_Feedback& kegu_feedback = 
+        rx_processor->get_kegu_motor_status(can_channel, motor_id);
+    
+    if (kegu_feedback.last_update_us > 0) {
+        const float pulses_per_degree = 100.0f;
+        return kegu_feedback.position / pulses_per_degree;
+    }
+    */
+    
+    return NAN;  // Return NAN to indicate no valid data
 }
+
+// Motor current getter function - gets MIT motor current from CAN1 Rx queue
+float get_motor_current(uint8_t can_id, uint8_t motor_id)
+{
+    // Get the CAN Rx processor singleton
+    CAN_Robot_Rx_Process* rx_processor = CAN_Robot_Rx_Process::get_singleton();
+    if (!rx_processor) {
+        return NAN;  // Return NAN to indicate no valid data
+    }
+    
+    // Only process CAN1 messages (channel 0 is CAN1 for motor)
+    uint8_t can_channel = 0;  // CAN1
+    
+    // Get MIT motor status from CAN1
+    const CAN_Robot_Rx_Process::MIT_Motor_Feedback& motor_feedback = 
+        rx_processor->get_mit_motor_status(can_channel, motor_id);
+    
+    // Check if we have valid data
+    if (motor_feedback.last_update_us > 0) {
+        return motor_feedback.current;  // Return current in Amps
+    }
+    
+    /* KEGU Motor interface (reserved for future use)
+    const CAN_Robot_Rx_Process::KEGU_Motor_Feedback& kegu_feedback = 
+        rx_processor->get_kegu_motor_status(can_channel, motor_id);
+    
+    if (kegu_feedback.last_update_us > 0) {
+        return kegu_feedback.current;
+    }
+    */
+    
+    return NAN;  // Return NAN to indicate no valid data
+}
+
+// Motor velocity getter function - gets MIT motor velocity from CAN1 Rx queue
+float get_motor_velocity(uint8_t can_id, uint8_t motor_id)
+{
+    // Get the CAN Rx processor singleton
+    CAN_Robot_Rx_Process* rx_processor = CAN_Robot_Rx_Process::get_singleton();
+    if (!rx_processor) {
+        return NAN;  // Return NAN to indicate no valid data
+    }
+    
+    // Only process CAN1 messages (channel 0 is CAN1 for motor)
+    uint8_t can_channel = 0;  // CAN1
+    
+    // Get MIT motor status from CAN1
+    const CAN_Robot_Rx_Process::MIT_Motor_Feedback& motor_feedback = 
+        rx_processor->get_mit_motor_status(can_channel, motor_id);
+    
+    // Check if we have valid data
+    if (motor_feedback.last_update_us > 0) {
+        return motor_feedback.velocity;  // Return velocity in degrees/sec
+    }
+    
+    /* KEGU Motor interface (reserved for future use)
+    const CAN_Robot_Rx_Process::KEGU_Motor_Feedback& kegu_feedback = 
+        rx_processor->get_kegu_motor_status(can_channel, motor_id);
+    
+    if (kegu_feedback.last_update_us > 0) {
+        return kegu_feedback.velocity;
+    }
+    */
+    
+    return NAN;  // Return NAN to indicate no valid data
+}
+
+//---------------------Trajectory Interpolation Functions---------------------
+// 初始化轨迹插值系统
+void init_trajectory_interpolation()
+{
+    CAN_Robot_Interpolation* interpolator = CAN_Robot_Interpolation::get_singleton();
+    if (interpolator) {
+        interpolator->init();
+    }
+}
+
+// 添加关键点到稀疏队列
+bool add_key_point(const float joint_angles[6])
+{
+    CAN_Robot_Interpolation* interpolator = CAN_Robot_Interpolation::get_singleton();
+    if (!interpolator) {
+        return false;
+    }
+    
+    JointPoint point;
+    for (uint8_t i = 0; i < 6; i++) {
+        point.angles[i] = joint_angles[i];
+    }
+    
+    return interpolator->sparse_queue_push(point);
+}
+
+// 获取当前电机位置并添加到稀疏队列
+bool add_current_motor_positions()
+{
+    CAN_Robot_Interpolation* interpolator = CAN_Robot_Interpolation::get_singleton();
+    if (!interpolator) {
+        return false;
+    }
+    
+    // 只有当稠密队列为空时才能获取新的电机位置
+    if (!interpolator->dense_queue_is_empty()) {
+        return false;
+    }
+    
+    JointPoint current_point;
+    // 获取6个关节电机的当前位置
+    for (uint8_t i = 0; i < 6; i++) {
+        // 假设关节电机在motor_instances[0][i]
+        if (i < MOTORS_PER_CAN) {
+            current_point.angles[i] = get_motor_position(motor_instances[0][i].can_id, 
+                                                       motor_instances[0][i].motor_id);
+        } else {
+            current_point.angles[i] = 0.0f; // 默认值
+        }
+    }
+    
+    return interpolator->sparse_queue_push(current_point);
+}
+
+// 从稠密队列获取下一个轨迹点
+bool get_next_trajectory_point(float joint_angles[6])
+{
+    CAN_Robot_Interpolation* interpolator = CAN_Robot_Interpolation::get_singleton();
+    if (!interpolator) {
+        return false;
+    }
+    
+    JointPoint point;
+    if (interpolator->dense_queue_pop(point)) {
+        for (uint8_t i = 0; i < 6; i++) {
+            joint_angles[i] = point.angles[i];
+        }
+        return true;
+    }
+    
+    return false;
+}
+
+// 生成轨迹插值 - 5Hz调用，支持指定处理点数
+bool generate_trajectory_interpolation(float Ts, float F, float ub_a, uint8_t max_points)
+{
+    CAN_Robot_Interpolation* interpolator = CAN_Robot_Interpolation::get_singleton();
+    if (!interpolator) {
+        return false;
+    }
+    
+    // 只有当稀疏队列有数据且稠密队列为空时才生成新轨迹
+    if (interpolator->sparse_queue_is_empty() || !interpolator->dense_queue_is_empty()) {
+        return false;
+    }
+    
+    return interpolator->generate_joint_trajectory(Ts, F, ub_a, max_points);
+}
+
+// 检查稠密队列状态
+bool is_dense_queue_empty()
+{
+    CAN_Robot_Interpolation* interpolator = CAN_Robot_Interpolation::get_singleton();
+    if (!interpolator) {
+        return true;
+    }
+    
+    return interpolator->dense_queue_is_empty();
+}
+
+// 检查稀疏队列状态
+bool is_sparse_queue_empty()
+{
+    CAN_Robot_Interpolation* interpolator = CAN_Robot_Interpolation::get_singleton();
+    if (!interpolator) {
+        return true;
+    }
+    
+    return interpolator->sparse_queue_is_empty();
+}
+
+// 获取稀疏队列中的点数
+uint8_t sparse_queue_count()
+{
+    CAN_Robot_Interpolation* interpolator = CAN_Robot_Interpolation::get_singleton();
+    if (!interpolator) {
+        return 0;
+    }
+    
+    return interpolator->sparse_queue_count();
+}
+
+
 
 } // namespace MIT_Motor 

@@ -1,15 +1,21 @@
 #include "CAN_Robot_Tx_Process.h"
+#include <AP_Logger/AP_Logger.h>  // For AP::logger()
 
-#include "cmsis_os.h"
-#include "arm_math.h"
-#include "main.h"
-#include "bsp_rng.h"
+//#include "cmsis_os.h"  // Comment out missing header
+//#include "arm_math.h"  // Comment out missing header
+//#include "main.h"      // Comment out missing header
+//#include "bsp_rng.h"   // Comment out missing header
 #include <math.h>
-#include "detect_task.h"
-#include "chassis_task.h"
+//#include "detect_task.h"  // Comment out missing header
+//#include "chassis_task.h" // Comment out missing header
 
-extern CAN_HandleTypeDef hcan1;
-extern CAN_HandleTypeDef hcan2;
+// Define osDelay as a simple delay function if not available
+#ifndef osDelay
+#define osDelay(ms) AP_HAL::millis_delay(ms)
+#endif
+
+// extern CAN_HandleTypeDef hcan1;  // Comment out hardware-specific dependencies
+// extern CAN_HandleTypeDef hcan2;  // Comment out hardware-specific dependencies
 #define IS_VALID_CAN_ID(can) ((can) == 1 || (can) == 2)
 #define IS_VALID_MOTOR_ID(mot) ((mot) > 0 && (mot) <= 8)
 
@@ -68,37 +74,25 @@ static const MotorIdMap motor_id_map[] = {
 //--------------static physical layer function--------------
 static void CanTransmit_can1 (uint8_t* buf, uint8_t len,uint16_t id)
 {
-  CAN_TxHeaderTypeDef TxHead;
-  uint32_t canTxMailbox;
-
+  // Hardware-specific function stubbed out for ArduPilot compatibility
+  // TODO: Replace with ArduPilot CAN API calls
   if ( (buf != NULL) && (len != 0)) {
-    TxHead.StdId    = id;
-    TxHead.IDE      = CAN_ID_STD;
-    TxHead.RTR      = CAN_RTR_DATA;
-    TxHead.DLC      = len;
-
-    while (HAL_CAN_AddTxMessage (&hcan1, &TxHead, buf, (uint32_t*) &canTxMailbox) != HAL_OK) {
-      HAL_CAN_AddTxMessage (&hcan1, &TxHead, buf, (uint32_t*) &canTxMailbox);
-      osDelay (1);
-    }
+    // Log message to indicate CAN transmission would occur
+    AP::logger().Write_MessageF("CAN1_TX: ID:0x%X DLC:%d [%02X %02X %02X %02X]", 
+                               id, len,
+                               buf[0], buf[1], buf[2], buf[3]);
   }
 }
 
 static void CanTransmit_can2 (uint8_t* buf, uint8_t len,uint16_t id)
 {
-  CAN_TxHeaderTypeDef TxHead;
-  uint32_t canTxMailbox;
-
+  // Hardware-specific function stubbed out for ArduPilot compatibility
+  // TODO: Replace with ArduPilot CAN API calls
   if ( (buf != NULL) && (len != 0)) {
-    TxHead.StdId    = id;
-    TxHead.IDE      = CAN_ID_STD;
-    TxHead.RTR      = CAN_RTR_DATA;
-    TxHead.DLC      = len;
-
-    while (HAL_CAN_AddTxMessage (&hcan2, &TxHead, buf, (uint32_t*) &canTxMailbox) != HAL_OK) {
-      HAL_CAN_AddTxMessage (&hcan2, &TxHead, buf, (uint32_t*) &canTxMailbox);
-      osDelay (1);
-    }
+    // Log message to indicate CAN transmission would occur
+    AP::logger().Write_MessageF("CAN2_TX: ID:0x%X DLC:%d [%02X %02X %02X %02X]", 
+                               id, len,
+                               buf[0], buf[1], buf[2], buf[3]);
   }
 }
 
@@ -390,20 +384,20 @@ void CAN_Robot_Tx_Process::init(void)
 
 // Create CAN frame from motor command (unified method)
 AP_HAL::CANFrame CAN_Robot_Tx_Process::create_motor_frame(uint8_t can_id, uint8_t motor_id, 
-                                                         MotorType motor_type, MotorControlMode mode, 
-                                                         float target_value)
+                                                           MotorType motor_type, MotorControlMode mode, 
+                                                           float target_value)
 {
     AP_HAL::CANFrame frame;
     
     if (motor_type == MotorType::MIT) {
         switch (mode) {
-            case MotorControlMode::CTRL_MODE_POSITION:
+            case CTRL_MODE_POSITION:
                 frame = create_mit_motor_frame(can_id, motor_id, MIT_CMD_POSITION, target_value);
                 break;
-            case MotorControlMode::CTRL_MODE_VELOCITY:
+            case CTRL_MODE_VELOCITY:
                 frame = create_mit_motor_frame(can_id, motor_id, MIT_CMD_SPEED, target_value);
                 break;
-            case MotorControlMode::CTRL_MODE_CURRENT:
+            case CTRL_MODE_CURRENT:
                 frame = create_mit_motor_frame(can_id, motor_id, MIT_CMD_CURRENT, target_value);
                 break;
             default:
@@ -413,13 +407,13 @@ AP_HAL::CANFrame CAN_Robot_Tx_Process::create_motor_frame(uint8_t can_id, uint8_
         }
     } else if (motor_type == MotorType::KEGU) {
         switch (mode) {
-            case MotorControlMode::CTRL_MODE_INIT:
+            case CTRL_MODE_INIT:
                 frame = create_kegu_motor_frame(can_id, motor_id, KEGU_CMD_INIT, target_value);
                 break;
-            case MotorControlMode::CTRL_MODE_ENABLE_CUR:
+            case CTRL_MODE_ENABLE_CUR:
                 frame = create_kegu_motor_frame(can_id, motor_id, KEGU_CMD_ENABLE_CUR, target_value);
                 break;
-            case MotorControlMode::CTRL_MODE_CURRENT:
+            case CTRL_MODE_CURRENT:
                 frame = create_kegu_motor_frame(can_id, motor_id, KEGU_CMD_SET_CUR, target_value);
                 break;
             default:
@@ -437,7 +431,7 @@ AP_HAL::CANFrame CAN_Robot_Tx_Process::create_motor_frame(uint8_t can_id, uint8_
 
 // Process motor commands and create CAN frames
 void CAN_Robot_Tx_Process::process_motor_command(uint8_t can_id, uint8_t motor_id, 
-                                               MotorType type, MotorCtrlMode mode, 
+                                               MotorType type, MotorControlMode mode, 
                                                float value)
 {
     AP_HAL::CANFrame frame;
@@ -445,13 +439,13 @@ void CAN_Robot_Tx_Process::process_motor_command(uint8_t can_id, uint8_t motor_i
     switch (type) {
         case MotorType::MIT:
             switch (mode) {
-                case MotorCtrlMode::POSITION:
+                case CTRL_MODE_POSITION:
                     frame = create_motor_frame(can_id, motor_id, type, mode, value);
                     break;
-                case MotorCtrlMode::SPEED:
+                case CTRL_MODE_VELOCITY:
                     frame = create_motor_frame(can_id, motor_id, type, mode, value);
                     break;
-                case MotorCtrlMode::CURRENT:
+                case CTRL_MODE_CURRENT:
                     frame = create_motor_frame(can_id, motor_id, type, mode, value);
                     break;
                 default:
@@ -461,13 +455,13 @@ void CAN_Robot_Tx_Process::process_motor_command(uint8_t can_id, uint8_t motor_i
             
         case MotorType::KEGU:
             switch (mode) {
-                case MotorCtrlMode::SET_INIT:
+                case CTRL_MODE_INIT:
                     frame = create_motor_frame(can_id, motor_id, type, mode, value);
                     break;
-                case MotorCtrlMode::SET_CUR_ENABLE:
+                case CTRL_MODE_ENABLE_CUR:
                     frame = create_motor_frame(can_id, motor_id, type, mode, value);
                     break;
-                case MotorCtrlMode::CURRENT:
+                case CTRL_MODE_CURRENT:
                     frame = create_motor_frame(can_id, motor_id, type, mode, value);
                     break;
                 default:

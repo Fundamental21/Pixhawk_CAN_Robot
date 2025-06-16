@@ -21,7 +21,9 @@ CAN_Robot_Rx_Queue::CAN_Robot_Rx_Queue() :
     _can2_count(0)
 {
     // 初始化队列
-    memset(_queue, 0, sizeof(_queue));
+    for (int i = 0; i < CAN_RX_QUEUE_SIZE; i++) {
+        _queue[i] = CANRxMessage();
+    }
 }
 
 bool CAN_Robot_Rx_Queue::push_message(const CANRxMessage& msg)
@@ -30,11 +32,12 @@ bool CAN_Robot_Rx_Queue::push_message(const CANRxMessage& msg)
     
     // 检查队列是否满
     if (is_queue_full()) {
-        _total_dropped++;
-        return false;
+        // 队列满时，自动删除最前面的消息（推进读指针）
+        _read_count++;
+        _total_dropped++;  // 统计被删除的消息
     }
     
-    // 添加消息到队列
+    // 添加消息到队列末尾
     uint32_t index = _write_count % CAN_RX_QUEUE_SIZE;
     _queue[index] = msg;
     _write_count++;

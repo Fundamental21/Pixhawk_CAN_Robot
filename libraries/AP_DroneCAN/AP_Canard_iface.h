@@ -38,6 +38,7 @@ public:
 
     void processTx(bool raw_commands_only);
     void processRx();
+    void processRxFromInterface(uint8_t iface_idx);  // 处理特定CAN接口的接收消息
 
     void process(uint32_t duration);
 

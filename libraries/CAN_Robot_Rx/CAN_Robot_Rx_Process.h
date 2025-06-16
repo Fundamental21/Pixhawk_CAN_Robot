@@ -4,6 +4,7 @@
 #include <AP_Math/AP_Math.h>
 #include <AP_Common/AP_Common.h>
 #include <AP_Logger/AP_Logger.h>
+#include "../CAN_Robot_Tx/CAN_Robot_Common.h"
 #include "CAN_Robot_Rx_Queue.h"
 
 // 专门处理机器人CAN消息的处理器
@@ -77,7 +78,6 @@ private:
     static CAN_Robot_Rx_Process *_singleton;
     
     // 电机状态数组 [CAN通道][电机ID]
-    static const uint8_t MAX_MOTORS_PER_CAN = 8;
     MIT_Motor_Feedback _mit_motors[2][MAX_MOTORS_PER_CAN];   // CAN1, CAN2
     KEGU_Motor_Feedback _kegu_motors[2][MAX_MOTORS_PER_CAN]; // CAN1, CAN2
     

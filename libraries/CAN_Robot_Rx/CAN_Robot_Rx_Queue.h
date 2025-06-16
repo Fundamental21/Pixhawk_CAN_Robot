@@ -3,6 +3,7 @@
 #include <AP_HAL/AP_HAL.h>
 #include <AP_Math/AP_Math.h>
 #include <AP_Common/AP_Common.h>
+#include "../CAN_Robot_Tx/CAN_Robot_Common.h"
 
 #define CAN_RX_QUEUE_SIZE 100  // 队列大小
 

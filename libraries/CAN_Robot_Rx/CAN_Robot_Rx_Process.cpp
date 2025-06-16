@@ -1,5 +1,6 @@
 #include "CAN_Robot_Rx_Process.h"
 #include <new>
+#include <cstring>  // for memcpy
 
 // 单例实例
 CAN_Robot_Rx_Process* CAN_Robot_Rx_Process::_singleton = nullptr;
@@ -165,11 +166,18 @@ void CAN_Robot_Rx_Process::decode_kegu_feedback(const CAN_Robot_Rx_Queue::CANRxM
     
     if (msg_type == 0x02 && msg.dlc >= 6) {
         // 速度和电流反馈
-        feedback.speed = *((int32_t*)msg.data);
-        feedback.current = *((int16_t*)(msg.data + 4)) * 10.0f; // 缩放电流
+        int32_t speed_raw;
+        memcpy(&speed_raw, msg.data, sizeof(int32_t));
+        feedback.speed = speed_raw;
+        
+        int16_t current_raw;
+        memcpy(&current_raw, msg.data + 4, sizeof(int16_t));
+        feedback.current = current_raw * 10.0f; // 缩放电流
     } else if (msg_type == 0x03 && msg.dlc >= 4) {
         // 位置反馈
-        feedback.position = *((int32_t*)msg.data);
+        int32_t position_raw;
+        memcpy(&position_raw, msg.data, sizeof(int32_t));
+        feedback.position = position_raw;
     }
     
     // 从DLC或数据中提取状态
