@@ -34,19 +34,12 @@ extern MotorInstance motor_instances[MAX_CAN_NUM][MOTORS_PER_CAN];
 // Function declarations from MIT_MotorV0.h
 extern void mit_motor_task (void const* argu);
 
-// External functions for Tihu motor control
-#ifdef __cplusplus
-extern "C" {
-#endif
-void Tihu_motor_ctrl(uint8_t can_id, uint8_t motor_id, uint8_t cmd, float value);
-void Tihu_motor_one_byte_ctrl(uint8_t can_id, uint8_t motor_id, uint8_t cmd);
-#ifdef __cplusplus
-}
-#endif
-
 // C++ namespace functions
 #ifdef __cplusplus
 namespace MIT_Motor {
+    // Initialization functions
+    void init_motor_instances();
+    
     // Utility functions
     float normalize_angle(float angle);
     float circular_diff(float from, float to);
@@ -74,6 +67,10 @@ namespace MIT_Motor {
     bool is_dense_queue_empty();
     bool is_sparse_queue_empty();
     uint8_t sparse_queue_count();
+    
+    // Direct transfer functions (for skipping interpolation)
+    bool get_next_sparse_point(float joint_angles[6]);
+    bool add_dense_point(const float joint_angles[6]);
 }
 #endif
 

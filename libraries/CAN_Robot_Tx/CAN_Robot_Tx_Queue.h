@@ -19,8 +19,8 @@ public:
         uint64_t timestamp_us;
         bool processed;
         
-        MotorCommand() : can_id(0), motor_id(0), motor_type(MOTOR_TYPE_MIT),
-                        mode(CTRL_MODE_POSITION), target_value(0.0f), 
+        MotorCommand() : can_id(0), motor_id(0), motor_type(MotorType::MIT),
+                        mode(MotorControlMode::POSITION), target_value(0.0f), 
                         timestamp_us(0), processed(false) {}
     };
 

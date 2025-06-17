@@ -34,6 +34,11 @@ enum class CanChannel : uint8_t {
 #define MIT_MOTOR_CURRENT 3
 #define MIT_MOTOR_SET_ID 5
 
+// Additional MIT motor commands
+#define SET_MAX_SPD 6
+#define SET_MIN_SPD 7
+#define SET_ZERO 8
+
 // Legacy aliases for backward compatibility - only when not in AP_DroneCAN context
 // #ifndef AP_DRONECAN_INCLUDED
 // #define POSITION MIT_MOTOR_POSITION
@@ -42,99 +47,134 @@ enum class CanChannel : uint8_t {
 // #define SET_ID MIT_MOTOR_SET_ID
 // #endif
 
-// Motor type and control mode definitions
-typedef enum {
-    MOTOR_TYPE_MIT = 0,
-    MOTOR_TYPE_KEGU = 1
-} MotorType;
+// Motor type and control mode definitions - C++ style enums
+enum class MotorType : uint8_t {
+    MIT = 0,
+    KEGU = 1
+};
 
-typedef enum {
-    CTRL_MODE_POSITION = 0,
-    CTRL_MODE_VELOCITY = 1, 
-    CTRL_MODE_CURRENT = 2,
-    CTRL_MODE_INIT = 3,
-    CTRL_MODE_ENABLE_CUR = 4,
-    CTRL_MODE_ENABLE_POS = 5,
-    CTRL_MODE_MAX = 6
-} MotorControlMode;
+enum class MotorControlMode : uint8_t {
+    POSITION = 0,
+    VELOCITY = 1, 
+    CURRENT = 2,
+    INIT = 3,
+    ENABLE_CUR = 4,
+    ENABLE_POS = 5,
+    MAX = 6
+};
+
+// Legacy definitions for backward compatibility
+#define MOTOR_TYPE_MIT     MotorType::MIT
+#define MOTOR_TYPE_KEGU    MotorType::KEGU
+#define CTRL_MODE_POSITION MotorControlMode::POSITION
+#define CTRL_MODE_VELOCITY MotorControlMode::VELOCITY
+#define CTRL_MODE_CURRENT  MotorControlMode::CURRENT
+#define CTRL_MODE_INIT     MotorControlMode::INIT
+#define CTRL_MODE_ENABLE_CUR MotorControlMode::ENABLE_CUR
+#define CTRL_MODE_ENABLE_POS MotorControlMode::ENABLE_POS
+
+// Legacy MotorCtrlMode for backward compatibility
+using MotorCtrlMode = MotorControlMode;
 
 // 统一的常量定义
-#define USART_RX_BUF_LENGHT     256     // 统一使用256
-#define USART1_RX_BUF_LENGHT    9
+constexpr uint16_t USART_RX_BUF_LENGHT = 256;     // 统一使用256
+constexpr uint8_t USART1_RX_BUF_LENGHT = 9;
 
-#define MAX_CAN_NUM   2                 // 统一使用2个CAN通道
-#define MOTORS_PER_CAN 8
-#define POSITION_QUEUE_SIZE 100         // 统一使用100
-#define POSITION_TOLERANCE  0.1f
-#define MAX_VELOCITY     10.0f          // deg/s
-#define MAX_ACCEL        20.0f          // deg/s^2
-#define CONTROL_PERIOD   0.01f          // 10ms
+constexpr uint8_t MAX_CAN_NUM = 2;                 // 统一使用2个CAN通道
+constexpr uint8_t MOTORS_PER_CAN = 8;
+constexpr uint16_t POSITION_QUEUE_SIZE = 100;     // 统一使用100
+constexpr float POSITION_TOLERANCE = 0.1f;
+constexpr float MAX_VELOCITY = 10.0f;             // deg/s
+constexpr float MAX_ACCEL = 20.0f;                // deg/s^2
+constexpr float CONTROL_PERIOD = 0.01f;           // 10ms
 
 // Joint and motor constants
-#define JOINT_MOTOR_COUNT 6
+constexpr uint8_t JOINT_MOTOR_COUNT = 6;
 
 // 统一的结构体定义
-typedef struct {
+struct JointAngles {
     float angles[6];
-} JointAngles;
+    
+    JointAngles() {
+        for (int i = 0; i < 6; i++) {
+            angles[i] = 0.0f;
+        }
+    }
+};
 
-typedef struct {
-    float current_ref; 
-    float current_vel; 
-    float target_pos;
-    float max_velocity;
-    float max_accel;
-    float accel_phase_time;
-    float cruise_phase_time;
-    float decel_phase_time;
-    float total_time;
-    float start_pos;
-    float current_time;
-    bool is_terminated;
-} TrapezoidPlanner;
+struct TrapezoidPlanner {
+    float current_ref{0.0f}; 
+    float current_vel{0.0f}; 
+    float target_pos{0.0f};
+    float max_velocity{MAX_VELOCITY};
+    float max_accel{MAX_ACCEL};
+    float accel_phase_time{0.0f};
+    float cruise_phase_time{0.0f};
+    float decel_phase_time{0.0f};
+    float total_time{0.0f};
+    float start_pos{0.0f};
+    float current_time{0.0f};
+    bool is_terminated{false};
+};
 
-typedef struct {
+struct PositionQueue {
     float data[POSITION_QUEUE_SIZE];
-    uint16_t head;
-    uint16_t tail;
-    uint16_t count;
-} PositionQueue;
+    uint16_t head{0};
+    uint16_t tail{0};
+    uint16_t count{0};
+    
+    PositionQueue() {
+        for (uint16_t i = 0; i < POSITION_QUEUE_SIZE; i++) {
+            data[i] = 0.0f;
+        }
+    }
+};
 
-typedef struct {
-    // id
-    uint8_t can_id;
-    uint8_t motor_id;
+struct MotorInstance {
+    // ID information
+    uint8_t can_id{0};
+    uint8_t motor_id{0};
     
-    // control state
-    MotorControlMode mode;
-    float target_value;
-    float last_position;
+    // Control state
+    MotorControlMode mode{MotorControlMode::POSITION};
+    float target_value{0.0f};
+    float last_position{0.0f};
     
-    // motor state
-    bool enabled;
-    bool first_command;
-    MotorType type;
+    // Motor state
+    bool enabled{false};
+    bool first_command{true};
+    MotorType type{MotorType::MIT};
 	
-    // position queue
+    // Position queue
     PositionQueue queue;
     
-    // interpolation
+    // Interpolation planner
     TrapezoidPlanner planner;
-} MotorInstance;
+};
 
 // 额外的结构体定义（来自Rover.h）
-typedef struct {
-    float x, y, z;
-    float roll, pitch, yaw;
-} Pose;
+struct Pose {
+    float x{0.0f}, y{0.0f}, z{0.0f};
+    float roll{0.0f}, pitch{0.0f}, yaw{0.0f};
+};
 
-typedef struct {
+struct IKSolutions {
     JointAngles solutions[8];
-    uint8_t count;
-} IKSolutions;
+    uint8_t count{0};
+};
 
-typedef struct {
+struct RobotArmConfig {
     float link_lengths[6];
     float joint_limits[6][2];  // [joint][min/max]
     char arm_side[2];
-} RobotArmConfig; 
+    
+    RobotArmConfig() {
+        for (int i = 0; i < 6; i++) {
+            link_lengths[i] = 0.0f;
+            joint_limits[i][0] = 0.0f;
+            joint_limits[i][1] = 0.0f;
+        }
+        arm_side[0] = 'L';
+        arm_side[1] = '\0';
+    }
+}; 

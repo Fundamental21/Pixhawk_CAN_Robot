@@ -491,12 +491,8 @@ public:
     float simple_sin_yaw;
 };
 
-// External functions for Tihu motor control
-// These should be implemented in the CAN communication module
-extern "C" {
-    void Tihu_motor_ctrl(uint8_t can_id, uint8_t motor_id, uint8_t cmd, float value);
-    void Tihu_motor_one_byte_ctrl(uint8_t can_id, uint8_t motor_id, uint8_t cmd);
-}
+// External functions for Tihu motor control are now defined in MIT_Motor.h
+// No need for separate declarations here
 
 extern Rover rover;
 

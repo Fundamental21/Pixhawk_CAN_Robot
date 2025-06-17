@@ -49,80 +49,6 @@
 
 const AP_HAL::HAL& hal = AP_HAL::get_HAL();
 
-// Robot arm global variables (moved here before function definitions)
-// 使用MIT_Motor.cpp中已正确初始化的全局motor_instances数组
-extern MotorInstance motor_instances[MAX_CAN_NUM][MOTORS_PER_CAN];
-
-// 确保joint_motor_list指向正确初始化的电机实例
-static MotorInstance* joint_motor_list[JOINT_MOTOR_COUNT] = {
-    &motor_instances[0][0],  // CAN1, Motor1 (can_id=1, motor_id=1)
-    &motor_instances[0][1],  // CAN1, Motor2 (can_id=1, motor_id=2)  
-    &motor_instances[0][2],  // CAN1, Motor3 (can_id=1, motor_id=3)
-    &motor_instances[0][3],  // CAN1, Motor4 (can_id=1, motor_id=4)
-    &motor_instances[0][4],  // CAN1, Motor5 (can_id=1, motor_id=5)
-    &motor_instances[0][5]   // CAN1, Motor6 (can_id=1, motor_id=6)
-};
-
-// // init kinematics parameters
-// static uint32_t current_point = 0;
-// static float* raw_joints = NULL;
-// static JointAngles input_angles;
-
-// Define predefined joint positions (example data - replace with actual trajectory)
-const float predefined_joints[50][6] = {
-    // Example trajectory points - replace with your actual robot arm trajectory
-    {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
-    {0.1f, 0.1f, 0.1f, 0.1f, 0.1f, 0.1f},
-    {0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f},
-    {0.3f, 0.3f, 0.3f, 0.3f, 0.3f, 0.3f},
-    {0.4f, 0.4f, 0.4f, 0.4f, 0.4f, 0.4f},
-    {0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f},
-    {0.6f, 0.6f, 0.6f, 0.6f, 0.6f, 0.6f},
-    {0.7f, 0.7f, 0.7f, 0.7f, 0.7f, 0.7f},
-    {0.8f, 0.8f, 0.8f, 0.8f, 0.8f, 0.8f},
-    {0.9f, 0.9f, 0.9f, 0.9f, 0.9f, 0.9f},
-    {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},
-    {1.1f, 1.1f, 1.1f, 1.1f, 1.1f, 1.1f},
-    {1.2f, 1.2f, 1.2f, 1.2f, 1.2f, 1.2f},
-    {1.3f, 1.3f, 1.3f, 1.3f, 1.3f, 1.3f},
-    {1.4f, 1.4f, 1.4f, 1.4f, 1.4f, 1.4f},
-    {1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f},
-    {1.6f, 1.6f, 1.6f, 1.6f, 1.6f, 1.6f},
-    {1.7f, 1.7f, 1.7f, 1.7f, 1.7f, 1.7f},
-    {1.8f, 1.8f, 1.8f, 1.8f, 1.8f, 1.8f},
-    {1.9f, 1.9f, 1.9f, 1.9f, 1.9f, 1.9f},
-    {2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f},
-    {2.1f, 2.1f, 2.1f, 2.1f, 2.1f, 2.1f},
-    {2.2f, 2.2f, 2.2f, 2.2f, 2.2f, 2.2f},
-    {2.3f, 2.3f, 2.3f, 2.3f, 2.3f, 2.3f},
-    {2.4f, 2.4f, 2.4f, 2.4f, 2.4f, 2.4f},
-    {2.5f, 2.5f, 2.5f, 2.5f, 2.5f, 2.5f},
-    {2.4f, 2.4f, 2.4f, 2.4f, 2.4f, 2.4f},
-    {2.3f, 2.3f, 2.3f, 2.3f, 2.3f, 2.3f},
-    {2.2f, 2.2f, 2.2f, 2.2f, 2.2f, 2.2f},
-    {2.1f, 2.1f, 2.1f, 2.1f, 2.1f, 2.1f},
-    {2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f},
-    {1.9f, 1.9f, 1.9f, 1.9f, 1.9f, 1.9f},
-    {1.8f, 1.8f, 1.8f, 1.8f, 1.8f, 1.8f},
-    {1.7f, 1.7f, 1.7f, 1.7f, 1.7f, 1.7f},
-    {1.6f, 1.6f, 1.6f, 1.6f, 1.6f, 1.6f},
-    {1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f},
-    {1.4f, 1.4f, 1.4f, 1.4f, 1.4f, 1.4f},
-    {1.3f, 1.3f, 1.3f, 1.3f, 1.3f, 1.3f},
-    {1.2f, 1.2f, 1.2f, 1.2f, 1.2f, 1.2f},
-    {1.1f, 1.1f, 1.1f, 1.1f, 1.1f, 1.1f},
-    {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},
-    {0.9f, 0.9f, 0.9f, 0.9f, 0.9f, 0.9f},
-    {0.8f, 0.8f, 0.8f, 0.8f, 0.8f, 0.8f},
-    {0.7f, 0.7f, 0.7f, 0.7f, 0.7f, 0.7f},
-    {0.6f, 0.6f, 0.6f, 0.6f, 0.6f, 0.6f},
-    {0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f},
-    {0.4f, 0.4f, 0.4f, 0.4f, 0.4f, 0.4f},
-    {0.3f, 0.3f, 0.3f, 0.3f, 0.3f, 0.3f},
-    {0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f},
-    {0.1f, 0.1f, 0.1f, 0.1f, 0.1f, 0.1f}
-};
-
 #define SCHED_TASK(func, _interval_ticks, _max_time_micros, _priority) SCHED_TASK_CLASS(Rover, &rover, func, _interval_ticks, _max_time_micros, _priority)
 
 /*
@@ -156,7 +82,7 @@ const AP_Scheduler::Task Rover::scheduler_tasks[] = {
     //         Function name,          Hz,     us,
 
     SCHED_TASK(robot_arm_control_loop,100,    200,   1),  // 100Hz control loop  
-    SCHED_TASK(robot_arm_interpolation_loop, 5,    500,   2),  // 5Hz trajectory interpolation
+    SCHED_TASK(robot_arm_interpolation_loop, 100,    500,   2),  // 5Hz trajectory interpolation
     SCHED_TASK(read_radio,             50,    200,   3),
     SCHED_TASK(ahrs_update,           400,    400,   6),
     SCHED_TASK(read_rangefinders,      50,    200,   9),
@@ -235,6 +161,19 @@ const AP_Scheduler::Task Rover::scheduler_tasks[] = {
 
 
 
+// 使用MIT_Motor.cpp中已正确初始化的全局motor_instances数组
+extern MotorInstance motor_instances[MAX_CAN_NUM][MOTORS_PER_CAN];
+
+// 确保joint_motor_list指向正确初始化的电机实例
+static MotorInstance* joint_motor_list[JOINT_MOTOR_COUNT] = {
+    &motor_instances[0][0],  // CAN1, Motor1 (can_id=1, motor_id=1)
+    &motor_instances[0][1],  // CAN1, Motor2 (can_id=1, motor_id=2)  
+    &motor_instances[0][2],  // CAN1, Motor3 (can_id=1, motor_id=3)
+    &motor_instances[0][3],  // CAN1, Motor4 (can_id=1, motor_id=4)
+    &motor_instances[0][4],  // CAN1, Motor5 (can_id=1, motor_id=5)
+    &motor_instances[0][5]   // CAN1, Motor6 (can_id=1, motor_id=6)
+};
+
 // Robot arm initialization - called once during startup
 void Rover::robot_arm_init()
 {
@@ -242,13 +181,16 @@ void Rover::robot_arm_init()
         return;
     }
     
+    // Initialize motor instances array first
+    MIT_Motor::init_motor_instances();
+    
     for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
         MotorInstance* m = joint_motor_list[i];
         m->enabled = true;
         m->mode = CTRL_MODE_POSITION;
         m->first_command = true;
         m->type = MOTOR_TYPE_MIT;
-        memset(&m->queue, 0, sizeof(PositionQueue));
+        m->queue = PositionQueue(); // Use assignment instead of memset for non-trivial types
         
         // 验证电机ID是否正确设置 (调试输出，可在调试后删除)
         #ifdef ARDUPILOT_BUILD
@@ -307,6 +249,80 @@ void Rover::robot_arm_init()
 // }
 
 // Control loop - 100Hz - Motor control and trapezoid planning  
+
+// // init kinematics parameters
+// static uint32_t current_point = 0;
+// static float* raw_joints = NULL;
+// static JointAngles input_angles;
+
+// // 使用MIT_Motor.cpp中已正确初始化的全局motor_instances数组
+// extern MotorInstance motor_instances[MAX_CAN_NUM][MOTORS_PER_CAN];
+
+// // 确保joint_motor_list指向正确初始化的电机实例
+// static MotorInstance* joint_motor_list[JOINT_MOTOR_COUNT] = {
+//     &motor_instances[0][0],  // CAN1, Motor1 (can_id=1, motor_id=1)
+//     &motor_instances[0][1],  // CAN1, Motor2 (can_id=1, motor_id=2)  
+//     &motor_instances[0][2],  // CAN1, Motor3 (can_id=1, motor_id=3)
+//     &motor_instances[0][3],  // CAN1, Motor4 (can_id=1, motor_id=4)
+//     &motor_instances[0][4],  // CAN1, Motor5 (can_id=1, motor_id=5)
+//     &motor_instances[0][5]   // CAN1, Motor6 (can_id=1, motor_id=6)
+// };
+
+// Define predefined joint positions (example data - replace with actual trajectory)
+const float predefined_joints[50][6] = {
+    // Example trajectory points - replace with your actual robot arm trajectory
+    {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
+    {0.1f, 0.1f, 0.1f, 0.1f, 0.1f, 0.1f},
+    {0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f},
+    {0.3f, 0.3f, 0.3f, 0.3f, 0.3f, 0.3f},
+    {0.4f, 0.4f, 0.4f, 0.4f, 0.4f, 0.4f},
+    {0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f},
+    {0.6f, 0.6f, 0.6f, 0.6f, 0.6f, 0.6f},
+    {0.7f, 0.7f, 0.7f, 0.7f, 0.7f, 0.7f},
+    {0.8f, 0.8f, 0.8f, 0.8f, 0.8f, 0.8f},
+    {0.9f, 0.9f, 0.9f, 0.9f, 0.9f, 0.9f},
+    {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},
+    {1.1f, 1.1f, 1.1f, 1.1f, 1.1f, 1.1f},
+    {1.2f, 1.2f, 1.2f, 1.2f, 1.2f, 1.2f},
+    {1.3f, 1.3f, 1.3f, 1.3f, 1.3f, 1.3f},
+    {1.4f, 1.4f, 1.4f, 1.4f, 1.4f, 1.4f},
+    {1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f},
+    {1.6f, 1.6f, 1.6f, 1.6f, 1.6f, 1.6f},
+    {1.7f, 1.7f, 1.7f, 1.7f, 1.7f, 1.7f},
+    {1.8f, 1.8f, 1.8f, 1.8f, 1.8f, 1.8f},
+    {1.9f, 1.9f, 1.9f, 1.9f, 1.9f, 1.9f},
+    {2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f},
+    {2.1f, 2.1f, 2.1f, 2.1f, 2.1f, 2.1f},
+    {2.2f, 2.2f, 2.2f, 2.2f, 2.2f, 2.2f},
+    {2.3f, 2.3f, 2.3f, 2.3f, 2.3f, 2.3f},
+    {2.4f, 2.4f, 2.4f, 2.4f, 2.4f, 2.4f},
+    {2.5f, 2.5f, 2.5f, 2.5f, 2.5f, 2.5f},
+    {2.4f, 2.4f, 2.4f, 2.4f, 2.4f, 2.4f},
+    {2.3f, 2.3f, 2.3f, 2.3f, 2.3f, 2.3f},
+    {2.2f, 2.2f, 2.2f, 2.2f, 2.2f, 2.2f},
+    {2.1f, 2.1f, 2.1f, 2.1f, 2.1f, 2.1f},
+    {2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f},
+    {1.9f, 1.9f, 1.9f, 1.9f, 1.9f, 1.9f},
+    {1.8f, 1.8f, 1.8f, 1.8f, 1.8f, 1.8f},
+    {1.7f, 1.7f, 1.7f, 1.7f, 1.7f, 1.7f},
+    {1.6f, 1.6f, 1.6f, 1.6f, 1.6f, 1.6f},
+    {1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f},
+    {1.4f, 1.4f, 1.4f, 1.4f, 1.4f, 1.4f},
+    {1.3f, 1.3f, 1.3f, 1.3f, 1.3f, 1.3f},
+    {1.2f, 1.2f, 1.2f, 1.2f, 1.2f, 1.2f},
+    {1.1f, 1.1f, 1.1f, 1.1f, 1.1f, 1.1f},
+    {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},
+    {0.9f, 0.9f, 0.9f, 0.9f, 0.9f, 0.9f},
+    {0.8f, 0.8f, 0.8f, 0.8f, 0.8f, 0.8f},
+    {0.7f, 0.7f, 0.7f, 0.7f, 0.7f, 0.7f},
+    {0.6f, 0.6f, 0.6f, 0.6f, 0.6f, 0.6f},
+    {0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f},
+    {0.4f, 0.4f, 0.4f, 0.4f, 0.4f, 0.4f},
+    {0.3f, 0.3f, 0.3f, 0.3f, 0.3f, 0.3f},
+    {0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f},
+    {0.1f, 0.1f, 0.1f, 0.1f, 0.1f, 0.1f}
+};
+
 void Rover::robot_arm_control_loop()
 {
     if (!arm_initialized) {
@@ -396,10 +412,10 @@ void Rover::robot_arm_interpolation_loop()
         return;
     }
     
-    // 轨迹插值参数
-    const float Ts = 0.01f;        // 采样周期 [s] - 10ms for 100Hz control loop
-    const float F = 10.0f;         // 最大关节速度 [deg/s]
-    const float ub_a = 100.0f;      // 最大加速度 [deg/s^2]
+    // 轨迹插值参数 (已注释掉，不再使用插值)
+    // const float Ts = 0.01f;        // 采样周期 [s] - 10ms for 100Hz control loop
+    // const float F = 10.0f;         // 最大关节速度 [deg/s]
+    // const float ub_a = 100.0f;      // 最大加速度 [deg/s^2]
     
     // 如果稠密队列为空，尝试生成新轨迹
     if (MIT_Motor::is_dense_queue_empty()) {
@@ -415,7 +431,7 @@ void Rover::robot_arm_interpolation_loop()
             for (uint8_t i = 0; i < 50; i++) {
                 float key_point[6];
                 for (uint8_t j = 0; j < 6; j++) {
-                    key_point[j] = predefined_joints[i][j] * (180.0f / M_PI);
+                    key_point[j] = ::predefined_joints[i][j] * (180.0f / M_PI);
                 }
                 MIT_Motor::add_key_point(key_point);
             }
@@ -454,8 +470,23 @@ void Rover::robot_arm_interpolation_loop()
                               points_to_process, total_points_in_queue);
             #endif
             
-            // 生成轨迹插值 (会自动从稀疏队列取出points_to_process个点进行处理)
-            MIT_Motor::generate_trajectory_interpolation(Ts, F, ub_a, points_to_process);
+            // 注释掉插值处理，直接将稀疏队列的点传递给稠密队列
+            // MIT_Motor::generate_trajectory_interpolation(Ts, F, ub_a, points_to_process);
+            
+            // 直接从稀疏队列取点并添加到稠密队列 (跳过插值)
+            for (uint8_t i = 0; i < points_to_process; i++) {
+                float key_point[6];
+                if (MIT_Motor::get_next_sparse_point(key_point)) {
+                    // 直接将关键点添加到稠密队列，不进行插值
+                    MIT_Motor::add_dense_point(key_point);
+                    
+                    #ifdef ARDUPILOT_BUILD
+                    hal.console->printf("Direct transfer point %d: [%.2f, %.2f, %.2f, %.2f, %.2f, %.2f]\n", 
+                                      i, key_point[0], key_point[1], key_point[2], 
+                                      key_point[3], key_point[4], key_point[5]);
+                    #endif
+                }
+            }
         } else {
             // 稀疏队列为空，重置初始化状态，准备下一轮
             sparse_queue_initialized = false;

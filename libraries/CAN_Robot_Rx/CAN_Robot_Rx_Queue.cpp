@@ -20,8 +20,8 @@ CAN_Robot_Rx_Queue::CAN_Robot_Rx_Queue() :
     _can1_count(0),
     _can2_count(0)
 {
-    // 初始化队列
-    for (int i = 0; i < CAN_RX_QUEUE_SIZE; i++) {
+    // 初始化队列 - 使用默认构造函数初始化非平凡类型
+    for (uint32_t i = 0; i < CAN_RX_QUEUE_SIZE; i++) {
         _queue[i] = CANRxMessage();
     }
 }

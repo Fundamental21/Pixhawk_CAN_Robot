@@ -29,7 +29,7 @@ def build(bld):
             'AP_IRLock',
             'CAN_Robot_Tx',
             'CAN_Robot_Rx',
-            'CAN_Robot_interpolation',
+            'CAN_Robot_interpolation', 
         ],
     )
 

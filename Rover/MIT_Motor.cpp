@@ -28,22 +28,75 @@ extern const AP_HAL::HAL& hal;
 #endif
 
 //---------------------Global Variables---------------------
-// Motor instances array definition with static initialization (preserving original structure)
-MotorInstance motor_instances[MAX_CAN_NUM][MOTORS_PER_CAN] = {
-    // CAN1
-    [0] = {
-        {.can_id=1, .motor_id=1}, {.can_id=1, .motor_id=2}, {.can_id=1, .motor_id=3}, {.can_id=1, .motor_id=4},
-        {.can_id=1, .motor_id=5}, {.can_id=1, .motor_id=6}, {.can_id=1, .motor_id=7}, {.can_id=1, .motor_id=8}
-    },
-    // CAN2
-    [1] = {
-        {.can_id=2, .motor_id=1}, {.can_id=2, .motor_id=2}, {.can_id=2, .motor_id=3}, {.can_id=2, .motor_id=4},
-        {.can_id=2, .motor_id=5}, {.can_id=2, .motor_id=6}, {.can_id=2, .motor_id=7}, {.can_id=2, .motor_id=8}
-    }
-};
+// Motor instances array definition with proper initialization
+MotorInstance motor_instances[MAX_CAN_NUM][MOTORS_PER_CAN];
 
 //---------------------Motor Instance Initialization---------------------
 namespace MIT_Motor {
+
+// Direct transfer queue for sparse to dense conversion (skipping interpolation)
+static struct DirectTransferQueue {
+    float points[50][6];  // 存储50个关键点，每个点6个关节角度
+    uint8_t head;
+    uint8_t tail;
+    uint8_t count;
+    
+    DirectTransferQueue() : head(0), tail(0), count(0) {}
+    
+    bool is_empty() const { return count == 0; }
+    bool is_full() const { return count >= 50; }
+    
+    bool push(const float joint_angles[6]) {
+        if (is_full()) return false;
+        
+        for (uint8_t i = 0; i < 6; i++) {
+            points[tail][i] = joint_angles[i];
+        }
+        tail = (tail + 1) % 50;
+        count++;
+        return true;
+    }
+    
+    bool pop(float joint_angles[6]) {
+        if (is_empty()) return false;
+        
+        for (uint8_t i = 0; i < 6; i++) {
+            joint_angles[i] = points[head][i];
+        }
+        head = (head + 1) % 50;
+        count--;
+        return true;
+    }
+} sparse_to_dense_queue;
+
+// Initialize motor instances with proper values
+void init_motor_instances() {
+    // Initialize CAN1 motors
+    for (uint8_t i = 0; i < MOTORS_PER_CAN; i++) {
+        motor_instances[0][i].can_id = 1;
+        motor_instances[0][i].motor_id = i + 1;
+        motor_instances[0][i].mode = MotorControlMode::POSITION;
+        motor_instances[0][i].target_value = 0.0f;
+        motor_instances[0][i].last_position = 0.0f;
+        motor_instances[0][i].enabled = false;
+        motor_instances[0][i].first_command = true;
+        motor_instances[0][i].type = MotorType::MIT;
+        // queue and planner are already initialized by their constructors
+    }
+    
+    // Initialize CAN2 motors
+    for (uint8_t i = 0; i < MOTORS_PER_CAN; i++) {
+        motor_instances[1][i].can_id = 2;
+        motor_instances[1][i].motor_id = i + 1;
+        motor_instances[1][i].mode = MotorControlMode::POSITION;
+        motor_instances[1][i].target_value = 0.0f;
+        motor_instances[1][i].last_position = 0.0f;
+        motor_instances[1][i].enabled = false;
+        motor_instances[1][i].first_command = true;
+        motor_instances[1][i].type = MotorType::MIT;
+        // queue and planner are already initialized by their constructors
+    }
+}
 
 //------------------Utils Functions------------------
 float normalize_angle(float angle) {
@@ -82,52 +135,7 @@ float queue_pop(PositionQueue* q) {
 //---------------------Queue Management---------------------
 
 //---------------------Trapezoid Planner---------------------
-void trapezoid_init(TrapezoidPlanner* planner, float initial_pos, float target_pos) {
-    if(!planner) return;
-    
-    planner->current_ref = normalize_angle(initial_pos);
-    planner->target_pos = normalize_angle(target_pos);
-    planner->current_vel = 0.0f;
-    planner->max_velocity = MAX_VELOCITY;
-    planner->max_accel = MAX_ACCEL;
-    
-    float diff = circular_diff(planner->current_ref, planner->target_pos);
-    if(fabsf(diff) > 180.0f) {
-        planner->target_pos += (diff > 0) ? -360.0f : 360.0f;
-    }
-    planner->is_terminated = false;
-}
 
-void trapezoid_update(TrapezoidPlanner* planner, bool is_last_point) {
-    if(!planner || planner->is_terminated) return;
-
-    float error = circular_diff(planner->current_ref, planner->target_pos);
-    float error_abs = fabsf(error);
-    float direction = error > 0 ? 1.0f : -1.0f;
-
-    float decel_dist = (planner->current_vel * planner->current_vel) / (2 * planner->max_accel);
-    
-    if(error_abs <= decel_dist || is_last_point) {
-        planner->current_vel -= direction * planner->max_accel * CONTROL_PERIOD;
-        if((direction > 0 && planner->current_vel < 0) || 
-           (direction < 0 && planner->current_vel > 0)) {
-            planner->current_vel = 0;
-        }
-    } else {
-        planner->current_vel += direction * planner->max_accel * CONTROL_PERIOD;
-        if(fabsf(planner->current_vel) > planner->max_velocity) {
-            planner->current_vel = direction * planner->max_velocity;
-        }
-    }
-    
-    planner->current_ref += planner->current_vel * CONTROL_PERIOD;
-    planner->current_ref = normalize_angle(planner->current_ref);
-    
-    if(error_abs < 0.5f && fabsf(planner->current_vel) < 1.0f) {
-        planner->is_terminated = true;
-        planner->current_ref = planner->target_pos;
-    }
-}
 //---------------------Trapezoid Planner---------------------
 
 //---------------------Motor Control Handler---------------------
@@ -265,122 +273,94 @@ float get_motor_velocity(uint8_t can_id, uint8_t motor_id)
 // 初始化轨迹插值系统
 void init_trajectory_interpolation()
 {
-    CAN_Robot_Interpolation* interpolator = CAN_Robot_Interpolation::get_singleton();
-    if (interpolator) {
-        interpolator->init();
-    }
+    CAN_Robot_Interpolation& interpolator = CAN_Robot_Interpolation::get_instance();
+    interpolator.init();
 }
 
 // 添加关键点到稀疏队列
 bool add_key_point(const float joint_angles[6])
 {
-    CAN_Robot_Interpolation* interpolator = CAN_Robot_Interpolation::get_singleton();
-    if (!interpolator) {
-        return false;
-    }
-    
-    JointPoint point;
-    for (uint8_t i = 0; i < 6; i++) {
-        point.angles[i] = joint_angles[i];
-    }
-    
-    return interpolator->sparse_queue_push(point);
+    // 直接添加到直接传递队列，跳过插值系统
+    return sparse_to_dense_queue.push(joint_angles);
 }
 
 // 获取当前电机位置并添加到稀疏队列
 bool add_current_motor_positions()
 {
-    CAN_Robot_Interpolation* interpolator = CAN_Robot_Interpolation::get_singleton();
-    if (!interpolator) {
+    CAN_Robot_Interpolation& interpolator = CAN_Robot_Interpolation::get_instance();
+    
+    // 检查是否所有运动都已完成
+    if (!interpolator.is_motion_complete()) {
         return false;
     }
     
-    // 只有当稠密队列为空时才能获取新的电机位置
-    if (!interpolator->dense_queue_is_empty()) {
-        return false;
-    }
-    
-    JointPoint current_point;
+    JointAngles current_angles;
     // 获取6个关节电机的当前位置
     for (uint8_t i = 0; i < 6; i++) {
         // 假设关节电机在motor_instances[0][i]
         if (i < MOTORS_PER_CAN) {
-            current_point.angles[i] = get_motor_position(motor_instances[0][i].can_id, 
+            current_angles.angles[i] = get_motor_position(motor_instances[0][i].can_id, 
                                                        motor_instances[0][i].motor_id);
         } else {
-            current_point.angles[i] = 0.0f; // 默认值
+            current_angles.angles[i] = 0.0f; // 默认值
         }
     }
     
-    return interpolator->sparse_queue_push(current_point);
+    interpolator.set_all_joints_target(current_angles);
+    return true;
 }
 
 // 从稠密队列获取下一个轨迹点
 bool get_next_trajectory_point(float joint_angles[6])
 {
-    CAN_Robot_Interpolation* interpolator = CAN_Robot_Interpolation::get_singleton();
-    if (!interpolator) {
-        return false;
-    }
-    
-    JointPoint point;
-    if (interpolator->dense_queue_pop(point)) {
-        for (uint8_t i = 0; i < 6; i++) {
-            joint_angles[i] = point.angles[i];
-        }
-        return true;
-    }
-    
-    return false;
+    // 直接从传递队列获取下一个轨迹点
+    return sparse_to_dense_queue.pop(joint_angles);
 }
 
 // 生成轨迹插值 - 5Hz调用，支持指定处理点数
 bool generate_trajectory_interpolation(float Ts, float F, float ub_a, uint8_t max_points)
 {
-    CAN_Robot_Interpolation* interpolator = CAN_Robot_Interpolation::get_singleton();
-    if (!interpolator) {
-        return false;
-    }
+    CAN_Robot_Interpolation& interpolator = CAN_Robot_Interpolation::get_instance();
     
-    // 只有当稀疏队列有数据且稠密队列为空时才生成新轨迹
-    if (interpolator->sparse_queue_is_empty() || !interpolator->dense_queue_is_empty()) {
-        return false;
-    }
-    
-    return interpolator->generate_joint_trajectory(Ts, F, ub_a, max_points);
+    // 执行插值更新
+    return interpolator.execute_interpolation();
 }
 
 // 检查稠密队列状态
 bool is_dense_queue_empty()
 {
-    CAN_Robot_Interpolation* interpolator = CAN_Robot_Interpolation::get_singleton();
-    if (!interpolator) {
-        return true;
-    }
-    
-    return interpolator->dense_queue_is_empty();
+    // 直接传递模式下，稠密队列就是我们的传递队列
+    return sparse_to_dense_queue.is_empty();
 }
 
 // 检查稀疏队列状态
 bool is_sparse_queue_empty()
 {
-    CAN_Robot_Interpolation* interpolator = CAN_Robot_Interpolation::get_singleton();
-    if (!interpolator) {
-        return true;
-    }
-    
-    return interpolator->sparse_queue_is_empty();
+    // 直接传递模式下，稀疏队列就是我们的传递队列
+    return sparse_to_dense_queue.is_empty();
 }
 
 // 获取稀疏队列中的点数
 uint8_t sparse_queue_count()
 {
-    CAN_Robot_Interpolation* interpolator = CAN_Robot_Interpolation::get_singleton();
-    if (!interpolator) {
-        return 0;
-    }
-    
-    return interpolator->sparse_queue_count();
+    // 返回直接传递队列中的点数
+    return sparse_to_dense_queue.count;
+}
+
+
+
+// 从稀疏队列获取下一个点（直接传递用）
+bool get_next_sparse_point(float joint_angles[6])
+{
+    // 从内部队列获取点
+    return sparse_to_dense_queue.pop(joint_angles);
+}
+
+// 添加点到稠密队列（直接传递用）
+bool add_dense_point(const float joint_angles[6])
+{
+    // 添加到内部队列
+    return sparse_to_dense_queue.push(joint_angles);
 }
 
 
