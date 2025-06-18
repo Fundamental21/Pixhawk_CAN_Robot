@@ -366,13 +366,13 @@ void CanardInterface::processRxFromInterface(uint8_t iface_idx) {
             // Push CAN message to robot rx queue - 明确标识CAN接口
             CAN_Robot_Rx_Queue* rx_queue = CAN_Robot_Rx_Queue::get_singleton();
             if (rx_queue != nullptr) {
-                CAN_Robot_Rx_Queue::CANRxMessage can_msg;   // 队列专用格式
-                can_msg.can_id = rxmsg.id;        // CAN消息ID
-                can_msg.can_channel = iface_idx;  // 明确标识：0=CAN1, 1=CAN2
-                can_msg.dlc = AP_HAL::CANFrame::dlcToDataLength(rxmsg.dlc);  // 数据长度
-                memcpy(can_msg.data, rxmsg.data, can_msg.dlc);  // 数据
-                can_msg.timestamp_us = timestamp;  // 时间戳    
-                rx_queue->push_message(can_msg);
+                CAN_Robot_Rx_Queue::CANRxMessage msg;   // 队列专用格式
+                msg.motor_id = rxmsg.id;        // MIT电机ID (CAN消息ID对应motor_id)
+                msg.can_id = iface_idx;         // CAN总线ID：0=CAN1, 1=CAN2
+                msg.dlc = AP_HAL::CANFrame::dlcToDataLength(rxmsg.dlc);  // 数据长度
+                memcpy(msg.data, rxmsg.data, msg.dlc);  // 数据
+                msg.timestamp_us = timestamp;  // 时间戳    
+                rx_queue->push_message(msg);
             }
             
             continue;

@@ -70,9 +70,9 @@ public:
     void log_motor_status(void);
     
     // 辅助函数（设为public以便外部调用）
-    bool is_mit_motor_id(uint32_t can_id) const;
-    bool is_kegu_motor_id(uint32_t can_id) const;
-    uint8_t extract_motor_id(uint32_t can_id) const;
+    bool is_mit_motor_id(uint32_t motor_id) const;
+    bool is_kegu_motor_id(uint32_t motor_id) const;
+    uint8_t extract_motor_id(uint32_t motor_id) const;
 
 private:
     static CAN_Robot_Rx_Process *_singleton;

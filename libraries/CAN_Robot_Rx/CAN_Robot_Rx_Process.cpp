@@ -35,10 +35,10 @@ void CAN_Robot_Rx_Process::process_all_rx_messages(void)
     uint32_t processed_count = 0;
     
     while (rx_queue->get_next_message(msg)) {
-        // 根据CAN ID类型分发消息
-        if (is_mit_motor_id(msg.can_id)) {
+        // 根据Motor ID类型分发消息
+        if (is_mit_motor_id(msg.motor_id)) {
             process_mit_motor_message(msg);
-        } else if (is_kegu_motor_id(msg.can_id)) {
+        } else if (is_kegu_motor_id(msg.motor_id)) {
             process_kegu_motor_message(msg);
         } else {
             // 处理其他机器人通信消息
@@ -61,12 +61,13 @@ void CAN_Robot_Rx_Process::process_all_rx_messages(void)
 
 void CAN_Robot_Rx_Process::process_mit_motor_message(const CAN_Robot_Rx_Queue::CANRxMessage &msg)
 {
-    if (msg.can_channel > 1) return; // 只支持CAN1和CAN2
+    if (msg.can_id > 1) return; // 只支持CAN1和CAN2
     
-    uint8_t motor_id = extract_motor_id(msg.can_id);
+    uint8_t motor_id = extract_motor_id(msg.motor_id);
     if (motor_id >= MAX_MOTORS_PER_CAN) return;
     
-    MIT_Motor_Feedback &feedback = _mit_motors[msg.can_channel][motor_id];
+    uint8_t can_channel = msg.can_id; // CAN1=0, CAN2=1
+    MIT_Motor_Feedback &feedback = _mit_motors[can_channel][motor_id];
     decode_mit_feedback(msg, feedback);
     feedback.last_update_us = msg.timestamp_us;
     
@@ -74,19 +75,20 @@ void CAN_Robot_Rx_Process::process_mit_motor_message(const CAN_Robot_Rx_Queue::C
     
     // 记录详细日志
     AP::logger().Write_MessageF("MIT_RX: CAN%d ID:0x%X M%d Pos:%.2f Vel:%.2f Curr:%.2f Temp:%.1f", 
-                               (int)msg.can_channel + 1, (unsigned)msg.can_id, motor_id,
+                               (int)msg.can_id + 1, (unsigned)msg.motor_id, motor_id,
                                feedback.position, feedback.velocity, 
                                feedback.current, feedback.temperature);
 }
 
 void CAN_Robot_Rx_Process::process_kegu_motor_message(const CAN_Robot_Rx_Queue::CANRxMessage &msg)
 {
-    if (msg.can_channel > 1) return; // 只支持CAN1和CAN2
+    if (msg.can_id > 1) return; // 只支持CAN1和CAN2
     
-    uint8_t motor_id = extract_motor_id(msg.can_id);
+    uint8_t motor_id = extract_motor_id(msg.motor_id);
     if (motor_id >= MAX_MOTORS_PER_CAN) return;
     
-    KEGU_Motor_Feedback &feedback = _kegu_motors[msg.can_channel][motor_id];
+    uint8_t can_channel = msg.can_id; // CAN1=0, CAN2=1
+    KEGU_Motor_Feedback &feedback = _kegu_motors[can_channel][motor_id];
     decode_kegu_feedback(msg, feedback);
     feedback.last_update_us = msg.timestamp_us;
     
@@ -94,7 +96,7 @@ void CAN_Robot_Rx_Process::process_kegu_motor_message(const CAN_Robot_Rx_Queue::
     
     // 记录详细日志
     AP::logger().Write_MessageF("KEGU_RX: CAN%d ID:0x%X M%d Spd:%.1f Curr:%.1f Pos:%d", 
-                               (int)msg.can_channel + 1, (unsigned)msg.can_id, motor_id,
+                               (int)msg.can_id + 1, (unsigned)msg.motor_id, motor_id,
                                feedback.speed, feedback.current, feedback.position);
 }
 
@@ -105,29 +107,29 @@ void CAN_Robot_Rx_Process::process_robot_command_message(const CAN_Robot_Rx_Queu
     // 处理机器人指令消息
     // 这里可以根据具体的机器人通信协议来实现
     AP::logger().Write_MessageF("ROBOT_CMD: CAN%d ID:0x%X DLC:%d [%02X %02X %02X %02X]", 
-                               (int)msg.can_channel + 1, (unsigned)msg.can_id, msg.dlc,
+                               (int)msg.can_id + 1, (unsigned)msg.motor_id, msg.dlc,
                                (unsigned)msg.data[0], (unsigned)msg.data[1], 
                                (unsigned)msg.data[2], (unsigned)msg.data[3]);
 }
 
-bool CAN_Robot_Rx_Process::is_mit_motor_id(uint32_t can_id) const
+bool CAN_Robot_Rx_Process::is_mit_motor_id(uint32_t motor_id) const
 {
-    // MIT电机通常使用CAN ID 1-8
-    return (can_id >= 1 && can_id <= 8);
+    // MIT电机使用Motor ID 0x01-0x06 (1-6)
+    return (motor_id >= 0x01 && motor_id <= 0x06);
 }
 
-bool CAN_Robot_Rx_Process::is_kegu_motor_id(uint32_t can_id) const
+bool CAN_Robot_Rx_Process::is_kegu_motor_id(uint32_t motor_id) const
 {
     // KEGU电机使用特定的ID模式
-    uint16_t high_part = (can_id >> 8) & 0xFF;
+    uint16_t high_part = (motor_id >> 8) & 0xFF;
     return (high_part == 0x02 || high_part == 0x03); // 反馈消息类型
 }
 
-uint8_t CAN_Robot_Rx_Process::extract_motor_id(uint32_t can_id) const
+uint8_t CAN_Robot_Rx_Process::extract_motor_id(uint32_t motor_id) const
 {
-    // 对于MIT电机，ID就是CAN ID
+    // 对于MIT电机，motor_id就是电机ID
     // 对于KEGU电机，ID在低字节
-    return can_id & 0xFF;
+    return motor_id & 0xFF;
 }
 
 void CAN_Robot_Rx_Process::decode_mit_feedback(const CAN_Robot_Rx_Queue::CANRxMessage &msg, MIT_Motor_Feedback &feedback)
@@ -137,18 +139,18 @@ void CAN_Robot_Rx_Process::decode_mit_feedback(const CAN_Robot_Rx_Queue::CANRxMe
     uint8_t cmd = msg.data[0];
     
     // 从数据字节1-4提取32位值（小端格式）
-    int32_t raw_value = (msg.data[4] << 24) | (msg.data[3] << 16) | 
-                        (msg.data[2] << 8) | msg.data[1];
+    int32_t raw_value = (msg.data[1] << 0) | (msg.data[2] << 8) | 
+                        (msg.data[3] << 16) | (msg.data[4] << 24);
     
     switch (cmd) {
         case 0x06: // 速度反馈
-            feedback.velocity = raw_value * 0.01f; // 0.01 RPM 分辨率
+            feedback.velocity = raw_value * 0.6f / 101.0f; // 0.01 RPM 分辨率
             break;
         case 0x08: // 位置反馈
-            feedback.position = raw_value * 0.01f; // 0.01 度分辨率
+            feedback.position = raw_value * 360.0f / 262144.0f; // 0.01 度分辨率
             break;
         case 0x04: // 电流反馈
-            feedback.current = raw_value * 0.001f; // mA 分辨率转换为 A
+            feedback.current = raw_value * 1.0f / 1000.0f; // mA 分辨率转换为 A
             break;
         case 0x32: // 温度反馈
             feedback.temperature = static_cast<float>(raw_value);

@@ -73,8 +73,8 @@ static struct DirectTransferQueue {
 void init_motor_instances() {
     // Initialize CAN1 motors
     for (uint8_t i = 0; i < MOTORS_PER_CAN; i++) {
-        motor_instances[0][i].can_id = 1;
-        motor_instances[0][i].motor_id = i + 1;
+        motor_instances[0][i].can_id = 0;           // CAN总线ID：0=CAN1
+        motor_instances[0][i].motor_id = i + 1;     // 电机ID：1,2,3,4,5,6
         motor_instances[0][i].mode = MotorControlMode::POSITION;
         motor_instances[0][i].target_value = 0.0f;
         motor_instances[0][i].last_position = 0.0f;
@@ -86,8 +86,8 @@ void init_motor_instances() {
     
     // Initialize CAN2 motors
     for (uint8_t i = 0; i < MOTORS_PER_CAN; i++) {
-        motor_instances[1][i].can_id = 2;
-        motor_instances[1][i].motor_id = i + 1;
+        motor_instances[1][i].can_id = 1;           // CAN总线ID：1=CAN2
+        motor_instances[1][i].motor_id = i + 1;     // 电机ID：1,2,3,4,5,6
         motor_instances[1][i].mode = MotorControlMode::POSITION;
         motor_instances[1][i].target_value = 0.0f;
         motor_instances[1][i].last_position = 0.0f;

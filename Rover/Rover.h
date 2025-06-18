@@ -124,9 +124,6 @@ private:
     uint8_t usart1_buf[2][USART_RX_BUF_LENGHT];
     float pos_history[50];
     
-    // Predefined joint positions (example data - replace with actual trajectory)
-    static const float predefined_joints[50][6];
-    
     // Robot arm control state
     uint32_t arm_control_counter;
     uint32_t arm_t_counter;
@@ -137,6 +134,11 @@ private:
     float debug_buffer[700];
     float real_buffer[700];
     uint16_t debug_counter;
+    
+    // Motor status arrays for efficient CAN RX data storage
+    float motor_positions[6];     // Current motor positions
+    float motor_velocities[6];    // Current motor velocities  
+    float motor_currents[6];      // Current motor currents
     
     // Robot arm objects
     RobotArmConfig left_arm_config;
@@ -159,9 +161,7 @@ private:
     void robot_arm_init();
     void robot_arm_fast_loop();    // 500Hz task
     void robot_arm_control_loop(); // 100Hz task  
-    void robot_arm_interpolation_loop(); // 5Hz trajectory interpolation task
     void robot_arm_slow_loop();    // ~20Hz task for logging
-    void process_can_rx_messages(); // CAN Rx message processing
 
     // must be the first AP_Param variable declared to ensure its
     // constructor runs before the constructors of the other AP_Param

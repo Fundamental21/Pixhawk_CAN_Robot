@@ -55,6 +55,57 @@ graph TD
     style L fill:#e8f5e8,stroke:#1b5e20
     style X fill:#fff3e0,stroke:#e65100
 
+## CAN rx, tx msg flow
+graph TB
+    subgraph "主控制系统"
+        A["robot_arm_control_loop()<br/>100Hz主循环"]
+        B["电机状态获取<br/>motor_positions[6]<br/>motor_velocities[6]<br/>motor_currents[6]"]
+        C["电机控制指令<br/>target_value设置"]
+    end
+    
+    subgraph "TX发送路径"
+        D["MotorControl_Handler()"]
+        E["CAN_Robot_Tx_Queue<br/>循环缓冲区"]
+        F["CAN_Robot_Tx_Process<br/>create_motor_frame()"]
+    end
+    
+    subgraph "RX接收路径"
+        G["CAN_Robot_Rx_Queue<br/>循环缓冲区"]
+        H["CAN_Robot_Rx_Process<br/>decode_mit_feedback()"]
+        I["MIT_Motor_Feedback<br/>数据存储"]
+    end
+    
+    subgraph "硬件接口"
+        J["AP_Canard_iface<br/>DroneCAN接口"]
+        K["CAN1/CAN2硬件"]
+    end
+    
+    subgraph "物理设备"
+        L["MIT电机1-6<br/>CAN ID: 0x01-0x06"]
+    end
+    
+    A --> C
+    A --> B
+    C --> D
+    D --> E
+    E --> F
+    F --> J
+    J --> K
+    K --> L
+    
+    L --> K
+    K --> J
+    J --> G
+    G --> H
+    H --> I
+    I --> B
+    
+    style A fill:#E6F3FF
+    style E fill:#FFF2E6
+    style G fill:#FFF2E6
+    style I fill:#F0F8E6
+    style L fill:#FFE6E6
+
 ### 主控制循环概览
 
 ```cpp

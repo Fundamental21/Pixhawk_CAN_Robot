@@ -39,7 +39,6 @@
 #include <CAN_Robot_Rx/CAN_Robot_Rx_Process.h>
 #include <CAN_Robot_Tx/CAN_Robot_Tx_Queue.h>
 #include <CAN_Robot_Tx/CAN_Robot_Tx_Process.h>
-#include <CAN_Robot_interpolation/CAN_Robot_interpolation.h>
 
 #define FORCE_VERSION_H_INCLUDE
 #include "version.h"
@@ -82,7 +81,6 @@ const AP_Scheduler::Task Rover::scheduler_tasks[] = {
     //         Function name,          Hz,     us,
 
     SCHED_TASK(robot_arm_control_loop,100,    200,   1),  // 100Hz control loop  
-    SCHED_TASK(robot_arm_interpolation_loop, 100,    500,   2),  // 5Hz trajectory interpolation
     SCHED_TASK(read_radio,             50,    200,   3),
     SCHED_TASK(ahrs_update,           400,    400,   6),
     SCHED_TASK(read_rangefinders,      50,    200,   9),
@@ -166,12 +164,12 @@ extern MotorInstance motor_instances[MAX_CAN_NUM][MOTORS_PER_CAN];
 
 // 确保joint_motor_list指向正确初始化的电机实例
 static MotorInstance* joint_motor_list[JOINT_MOTOR_COUNT] = {
-    &motor_instances[0][0],  // CAN1, Motor1 (can_id=1, motor_id=1)
-    &motor_instances[0][1],  // CAN1, Motor2 (can_id=1, motor_id=2)  
-    &motor_instances[0][2],  // CAN1, Motor3 (can_id=1, motor_id=3)
-    &motor_instances[0][3],  // CAN1, Motor4 (can_id=1, motor_id=4)
-    &motor_instances[0][4],  // CAN1, Motor5 (can_id=1, motor_id=5)
-    &motor_instances[0][5]   // CAN1, Motor6 (can_id=1, motor_id=6)
+    &motor_instances[0][0],  // CAN总线1, 电机1 (can_id=0, motor_id=1)
+    &motor_instances[0][1],  // CAN总线1, 电机2 (can_id=0, motor_id=2)  
+    &motor_instances[0][2],  // CAN总线1, 电机3 (can_id=0, motor_id=3)
+    &motor_instances[0][3],  // CAN总线1, 电机4 (can_id=0, motor_id=4)
+    &motor_instances[0][4],  // CAN总线1, 电机5 (can_id=0, motor_id=5)
+    &motor_instances[0][5]   // CAN总线1, 电机6 (can_id=0, motor_id=6)
 };
 
 // Robot arm initialization - called once during startup
@@ -199,78 +197,13 @@ void Rover::robot_arm_init()
         #endif
     }
     
-    
-    // Initialize trajectory interpolation system
-    MIT_Motor::init_trajectory_interpolation();
-    
-    // // Initialize control state
-    // arm_control_counter = 0;
-    // arm_t_counter = 0;
-    // arm_current_point = 0;
-    // debug_counter = 0;
-    
-    // // Clear debug buffers
-    // memset(debug_buffer, 0, sizeof(debug_buffer));
-    // memset(real_buffer, 0, sizeof(real_buffer));
-    // memset(pos_history, 0, sizeof(pos_history));
-    
     arm_initialized = true;
 }
 
-// Fast loop - 400Hz - Main kinematics and trajectory planning
-// void Rover::robot_arm_fast_loop()
-// {
-//     if (!arm_initialized) {
-//         robot_arm_init();
-//         return;
-//     }
-    
-//     MotorInstance* can1_motor2 = &motor_instances[0][1];
-    
-//     // Original 500Hz logic - generate trajectory points
-//     if(can1_motor2->mode == CTRL_MODE_POSITION && arm_current_point < 50) {
-//         // Get target parameters
-//         memcpy(input_angles.angles, predefined_joints[arm_current_point], sizeof(predefined_joints[arm_current_point]));
-        
-//         // Forward calculate end pose
-//         if (forward_kinematic(&left_arm_config, &input_angles, &target_pose)) {
-//             // Inverse calculate joint angle
-//             if (inverse_kinematic(&left_arm_config, &target_pose, &input_angles, &solutions)) {
-//                 float weights[6] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
-//                 if (find_optimal_solution(&left_arm_config, &solutions, &input_angles, weights, &ik_result)) {
-//                     float motor5_pos = ik_result.angles[0] * (180.0f / M_PI);
-//                     queue_push(&can1_motor2->queue, motor5_pos);
-//                     pos_history[arm_current_point] = motor5_pos;
-//                 }
-//             }
-//         }
-//         arm_current_point++;
-//     }
-// }
-
-// Control loop - 100Hz - Motor control and trapezoid planning  
-
-// // init kinematics parameters
-// static uint32_t current_point = 0;
-// static float* raw_joints = NULL;
-// static JointAngles input_angles;
-
-// // 使用MIT_Motor.cpp中已正确初始化的全局motor_instances数组
-// extern MotorInstance motor_instances[MAX_CAN_NUM][MOTORS_PER_CAN];
-
-// // 确保joint_motor_list指向正确初始化的电机实例
-// static MotorInstance* joint_motor_list[JOINT_MOTOR_COUNT] = {
-//     &motor_instances[0][0],  // CAN1, Motor1 (can_id=1, motor_id=1)
-//     &motor_instances[0][1],  // CAN1, Motor2 (can_id=1, motor_id=2)  
-//     &motor_instances[0][2],  // CAN1, Motor3 (can_id=1, motor_id=3)
-//     &motor_instances[0][3],  // CAN1, Motor4 (can_id=1, motor_id=4)
-//     &motor_instances[0][4],  // CAN1, Motor5 (can_id=1, motor_id=5)
-//     &motor_instances[0][5]   // CAN1, Motor6 (can_id=1, motor_id=6)
-// };
-
-// Define predefined joint positions (example data - replace with actual trajectory)
-const float predefined_joints[50][6] = {
-    // Example trajectory points - replace with your actual robot arm trajectory
+// Define predefined joint positions (example data - replace with actual positions)
+// This is a file-scope constant array, not a class member
+static const float predefined_joints[50][6] = {
+    // Example joint positions - replace with your actual robot arm positions
     {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
     {0.1f, 0.1f, 0.1f, 0.1f, 0.1f, 0.1f},
     {0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f},
@@ -325,182 +258,15 @@ const float predefined_joints[50][6] = {
 
 void Rover::robot_arm_control_loop()
 {
+
     if (!arm_initialized) {
+        robot_arm_init();
         return;
     }
     
-    // Initialize CAN Tx module if not already done
-    static bool tx_initialized = false;
-    if (!tx_initialized) {
-        // 初始化发送队列和处理器 - 在主控制循环中初始化，负责发送电机控制指令
-        CAN_Robot_Tx_Queue::init();
-        CAN_Robot_Tx_Process::init();
-        tx_initialized = true;
-    }
 
-    // Process CAN Rx messages first
-    process_can_rx_messages();
 
-    // 100Hz motor control - 从稠密队列获取插值后的轨迹点
-    float trajectory_point[6];
-    bool has_trajectory = MIT_Motor::get_next_trajectory_point(trajectory_point);
-    
-    for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
-        MotorInstance* m = joint_motor_list[i];
-        
-        if (has_trajectory) {
-            // 直接使用稠密矩阵中的轨迹点作为目标值
-            m->target_value = trajectory_point[i];
-        } 
-        // else {
-        //     // 如果没有轨迹数据，使用调试值（保持原来的逻辑作为备用）
-        //     switch (i) {
-        //         case 0:
-        //             m->target_value = -3.2f + debug_current1;
-        //             break;
-        //         case 1:
-        //             m->target_value = 6.2923f + debug_current2;
-        //             break;
-        //         case 2:
-        //             m->target_value = -60.0574f + debug_current3;
-        //             break;
-        //         case 3:
-        //             m->target_value = 0.9413f + debug_current4;
-        //             break;
-        //         case 4:
-        //             m->target_value = 57.6267f + debug_current5;
-        //             break;                    
-        //         case 5:
-        //             m->target_value = 10.1124f + debug_current6;
-        //             break;                                    
-        //     }
-        // }
-        
-        // 直接调用电机控制处理函数
-        MIT_Motor::MotorControl_Handler(m);
-    }
-    // grasper motor control 夹爪接口
-    // MotorInstance* gm = grasper_motor_list[0];
-    // gm->target_value = debug_current7;
-    // handle_kegu_motor(gm);
-
-    // 20Hz debug logging
-    // static uint32_t t_counter = 0;
-    // if (t_counter % 25 == 0) {
-    //     if (debug_counter < 599) {
-    //         debug_buffer[debug_counter] = joint_motor_list[4]->planner.current_ref;
-    //         real_buffer[debug_counter] = debug_position;
-    //         debug_counter++;
-    //     }            
-    // }
-    // t_counter = (t_counter + 1) % 50;
-}
-
-// 轨迹点添加模式配置
-// 可选值：
-//   0 = 一次添加全部关键点 (50个点)
-//   1 = 批量添加 (每次5个点)
-//   2 = 单个添加 (每次1个点)
-//   其他数值 = 自定义每次添加的点数
-#define TRAJECTORY_ADD_MODE 1           // 添加模式选择
-#define CUSTOM_POINTS_PER_BATCH 5       // 自定义批量大小 (当模式>2时使用)
-
-// Robot arm interpolation loop - 5Hz - Trajectory interpolation
-void Rover::robot_arm_interpolation_loop()
-{
-    if (!arm_initialized) {
-        return;
-    }
-    
-    // 轨迹插值参数 (已注释掉，不再使用插值)
-    // const float Ts = 0.01f;        // 采样周期 [s] - 10ms for 100Hz control loop
-    // const float F = 10.0f;         // 最大关节速度 [deg/s]
-    // const float ub_a = 100.0f;      // 最大加速度 [deg/s^2]
-    
-    // 如果稠密队列为空，尝试生成新轨迹
-    if (MIT_Motor::is_dense_queue_empty()) {
-        // 静态变量，记录稀疏队列的初始化状态
-        static bool sparse_queue_initialized = false;
-        
-        // 第一次运行时，先把所有predefined_joints添加到稀疏队列
-        if (!sparse_queue_initialized) {
-            // 添加当前电机位置作为起始点
-            MIT_Motor::add_current_motor_positions();
-            
-            // 一次性将所有predefined_joints添加到稀疏队列
-            for (uint8_t i = 0; i < 50; i++) {
-                float key_point[6];
-                for (uint8_t j = 0; j < 6; j++) {
-                    key_point[j] = ::predefined_joints[i][j] * (180.0f / M_PI);
-                }
-                MIT_Motor::add_key_point(key_point);
-            }
-            sparse_queue_initialized = true;
-            
-            #ifdef ARDUPILOT_BUILD
-            hal.console->printf("Sparse queue initialized with %d points\n", 
-                              MIT_Motor::sparse_queue_count());
-            #endif
-        }
-        
-        // 检查稀疏队列中的点总数
-        uint8_t total_points_in_queue = MIT_Motor::sparse_queue_count();
-        
-        if (total_points_in_queue > 0) {
-            // 根据配置模式确定本次处理的点数
-            uint8_t points_to_process;
-            switch (TRAJECTORY_ADD_MODE) {
-                case 0:  // 一次处理全部
-                    points_to_process = total_points_in_queue;
-                    break;
-                case 1:  // 批量处理 (5个点)
-                    points_to_process = (total_points_in_queue < 5) ? total_points_in_queue : 5;
-                    break;
-                case 2:  // 单个处理
-                    points_to_process = 1;
-                    break;
-                default: // 自定义批量大小
-                    points_to_process = (total_points_in_queue < CUSTOM_POINTS_PER_BATCH) ? 
-                                       total_points_in_queue : CUSTOM_POINTS_PER_BATCH;
-                    break;
-            }
-            
-            #ifdef ARDUPILOT_BUILD
-            hal.console->printf("Processing %d points from sparse queue (total: %d)\n", 
-                              points_to_process, total_points_in_queue);
-            #endif
-            
-            // 注释掉插值处理，直接将稀疏队列的点传递给稠密队列
-            // MIT_Motor::generate_trajectory_interpolation(Ts, F, ub_a, points_to_process);
-            
-            // 直接从稀疏队列取点并添加到稠密队列 (跳过插值)
-            for (uint8_t i = 0; i < points_to_process; i++) {
-                float key_point[6];
-                if (MIT_Motor::get_next_sparse_point(key_point)) {
-                    // 直接将关键点添加到稠密队列，不进行插值
-                    MIT_Motor::add_dense_point(key_point);
-                    
-                    #ifdef ARDUPILOT_BUILD
-                    hal.console->printf("Direct transfer point %d: [%.2f, %.2f, %.2f, %.2f, %.2f, %.2f]\n", 
-                                      i, key_point[0], key_point[1], key_point[2], 
-                                      key_point[3], key_point[4], key_point[5]);
-                    #endif
-                }
-            }
-        } else {
-            // 稀疏队列为空，重置初始化状态，准备下一轮
-            sparse_queue_initialized = false;
-            
-            #ifdef ARDUPILOT_BUILD
-            hal.console->printf("Sparse queue empty, ready for next trajectory cycle\n");
-            #endif
-        }
-    }
-}
-
-// CAN Rx message processing function - called from robot_arm_control_loop
-void Rover::process_can_rx_messages()
-{
+    // Process CAN Rx messages and get motor status data
     // Initialize CAN Rx modules if not already done
     static bool rx_initialized = false;
     if (!rx_initialized) {
@@ -515,8 +281,81 @@ void Rover::process_can_rx_messages()
     if (rx_processor != nullptr) {
         rx_processor->process_all_rx_messages();
     }
-}
+    
+    // 获取并更新电机状态数据 - 使用类成员变量，高效无重复声明
+    for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
+        MotorInstance* m = joint_motor_list[i];
+        
+        // 为每个电机分别获取状态数据，存储到成员变量数组中
+        motor_positions[i] = MIT_Motor::get_motor_position(m->can_id, m->motor_id);
+        motor_velocities[i] = MIT_Motor::get_motor_velocity(m->can_id, m->motor_id);
+        motor_currents[i] = MIT_Motor::get_motor_current(m->can_id, m->motor_id);
+        
+        // 只要不是NaN就更新位置值（包括0.0也是有效值）
+        if (!isnan(motor_positions[i])) {
+            m->last_position = motor_positions[i];
+        }
+    }
 
+    // Initialize CAN Tx module if not already done
+    static bool tx_initialized = false;
+    if (!tx_initialized) {
+        // 初始化发送队列和处理器 - 在主控制循环中初始化，负责发送电机控制指令
+        CAN_Robot_Tx_Queue::init();
+        CAN_Robot_Tx_Process::init();
+        
+        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
+            MotorInstance* m = joint_motor_list[i];
+            m->target_value = m->last_position;
+            MIT_Motor::MotorControl_Handler(m);
+        }
+        tx_initialized = true;
+    }
+
+    // 100Hz motor control - direct position control without interpolation
+    static uint32_t point_counter = 0;
+    static uint32_t point_index = 0;
+    
+    // 可自定义的位置切换时间间隔（单位：100Hz循环次数）
+    // 例如：100 = 1秒, 200 = 2秒, 50 = 0.5秒
+    static const uint32_t POSITION_SWITCH_INTERVAL = 100; // 默认1秒切换一次
+    
+    // Change position based on custom interval
+    if (point_counter >= POSITION_SWITCH_INTERVAL) {
+        point_counter = 0;
+        point_index = (point_index + 1) % 50; // Cycle through all 50 positions
+    }
+    point_counter++;
+    
+    for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
+        MotorInstance* m = joint_motor_list[i];
+        
+        // 使用switch case为每个关节设置目标值
+        switch (i) {
+            case 0:
+                m->target_value = predefined_joints[point_index][0] * (180.0f / M_PI);
+                break;
+            case 1:
+                m->target_value = predefined_joints[point_index][1] * (180.0f / M_PI);
+                break;
+            case 2:
+                m->target_value = predefined_joints[point_index][2] * (180.0f / M_PI);
+                break;
+            case 3:
+                m->target_value = predefined_joints[point_index][3] * (180.0f / M_PI);
+                break;
+            case 4:
+                m->target_value = predefined_joints[point_index][4] * (180.0f / M_PI);
+                break;                    
+            case 5:
+                m->target_value = predefined_joints[point_index][5] * (180.0f / M_PI);
+                break;                                    
+        }
+        
+        // 直接调用电机控制处理函数
+        // MIT_Motor::MotorControl_Handler(m);
+    }
+}
 
 
 
@@ -552,6 +391,11 @@ Rover::Rover(void) :
     memset(pos_history, 0, sizeof(pos_history));
     memset(debug_buffer, 0, sizeof(debug_buffer));
     memset(real_buffer, 0, sizeof(real_buffer));
+    
+    // Initialize motor status arrays for efficient CAN RX data storage
+    memset(motor_positions, 0, sizeof(motor_positions));
+    memset(motor_velocities, 0, sizeof(motor_velocities));
+    memset(motor_currents, 0, sizeof(motor_currents));
 }
 
 #if AP_SCRIPTING_ENABLED

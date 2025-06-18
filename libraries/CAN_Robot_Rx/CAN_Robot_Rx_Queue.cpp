@@ -44,9 +44,9 @@ bool CAN_Robot_Rx_Queue::push_message(const CANRxMessage& msg)
     
     // 更新统计
     _total_received++;
-    if (msg.can_channel == 0) {
+    if (msg.can_id == 0) {
         _can1_count++;
-    } else if (msg.can_channel == 1) {
+    } else if (msg.can_id == 1) {
         _can2_count++;
     }
     

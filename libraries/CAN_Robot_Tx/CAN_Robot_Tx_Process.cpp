@@ -119,33 +119,31 @@ AP_HAL::CANFrame create_mit_motor_frame(uint8_t can_id, uint8_t motor_id, uint8_
 {
     AP_HAL::CANFrame frame{};
     frame.id = motor_id;
-    frame.dlc = 8;
+    frame.dlc = 5;
     
     // Convert float value to int32 based on command type
     int32_t int_value{0};
+    uint8_t address{0};
     switch (cmd) {
         case MIT_CMD_POSITION:
-            int_value = static_cast<int32_t>(value * 100.0f); // 0.01 degree resolution
+            address = 0x1E;
+            int_value = (int32_t)roundf(value / 360.0f * (262144.0f));
             break;
         case MIT_CMD_SPEED:
-            int_value = static_cast<int32_t>(value * 100.0f); // 0.01 RPM resolution
+            address = 0x1D;
+            int_value = (int32_t)roundf(value * 101.0f * (5.0f / 3.0f));
             break;
         case MIT_CMD_CURRENT:
-            int_value = static_cast<int32_t>(value * 1000.0f); // mA resolution
-            break;
-        default:
-            int_value = static_cast<int32_t>(value);
+            address = 0x1C;
+            int_value = (int32_t)roundf(value * 1000.0f);
             break;
     }
     
-    frame.data[0] = cmd;
-    frame.data[1] = 0;
-    frame.data[2] = static_cast<uint8_t>((int_value >> 24) & 0xFF);
-    frame.data[3] = static_cast<uint8_t>((int_value >> 16) & 0xFF);
-    frame.data[4] = static_cast<uint8_t>((int_value >> 8) & 0xFF);
-    frame.data[5] = static_cast<uint8_t>(int_value & 0xFF);
-    frame.data[6] = 0;
-    frame.data[7] = 0;
+    frame.data[0] = address;
+    frame.data[1] = (uint8_t)(int_value >> 0);
+    frame.data[2] = (uint8_t)(int_value >> 8);
+    frame.data[3] = (uint8_t)(int_value >> 16);
+    frame.data[4] = (uint8_t)(int_value >> 24);
     
     return frame;
 }

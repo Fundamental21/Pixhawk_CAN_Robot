@@ -12,15 +12,15 @@ class CAN_Robot_Rx_Queue {
 public:
     // CAN接收消息结构
     struct CANRxMessage {
-        uint32_t can_id;        // CAN ID
-        uint8_t can_channel;    // CAN通道 (0=CAN1, 1=CAN2)
+        uint32_t motor_id;      // MIT电机ID (原CAN消息ID)
+        uint8_t can_id;         // CAN总线ID (0=CAN1, 1=CAN2)
         uint8_t dlc;           // 数据长度
         uint8_t data[8];       // 数据内容
         uint64_t timestamp_us; // 接收时间戳(微秒)
         
         CANRxMessage() {
+            motor_id = 0;
             can_id = 0;
-            can_channel = 0;
             dlc = 0;
             memset(data, 0, sizeof(data));
             timestamp_us = 0;
