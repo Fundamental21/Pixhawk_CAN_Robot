@@ -93,6 +93,12 @@ extern const AP_HAL::HAL& hal;
 
 #define debug_dronecan(level_debug, fmt, args...) do { AP::can().log_text(level_debug, "DroneCAN", fmt, ##args); } while (0)
 
+// Motor CAN IDs for drive loop
+static const uint8_t _motor_can_id[] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+static const float _motor_position_deg[] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+//static const float _motor_position_deg[] = {90.0f, 90.0f, 90.0f, 90.0f, 90.0f, 90.0f};
+static const uint8_t _motor_can_id_count = sizeof(_motor_can_id) / sizeof(_motor_can_id[0]);
+
 // Translation of all messages from DroneCAN structures into AP structures is done
 // in AP_DroneCAN and not in corresponding drivers.
 // The overhead of including definitions of DSDL is very high and it is best to
@@ -499,12 +505,12 @@ void AP_DroneCAN::init(uint8_t driver_index, bool enable_filters)
         return;
     }
 
-    hal.util->snprintf(_thread_name, sizeof(_thread_name), "canhb_%u", driver_index);
+    // hal.util->snprintf(_thread_name, sizeof(_thread_name), "canhb_%u", driver_index);
 
-    if (!hal.scheduler->thread_create(FUNCTOR_BIND_MEMBER(&AP_DroneCAN::can_heartbeat_loop, void), _thread_name, DRONECAN_STACK_SIZE, AP_HAL::Scheduler::PRIORITY_CAN, 0)) {
-        debug_dronecan(AP_CANManager::LOG_ERROR, "Can: couldn't create heartbeat thread\n\r");
-        return;
-    }
+    // if (!hal.scheduler->thread_create(FUNCTOR_BIND_MEMBER(&AP_DroneCAN::can_heartbeat_loop, void), _thread_name, DRONECAN_STACK_SIZE, AP_HAL::Scheduler::PRIORITY_CAN, 0)) {
+    //     debug_dronecan(AP_CANManager::LOG_ERROR, "Can: couldn't create heartbeat thread\n\r");
+    //     return;
+    // }
 
     // hal.util->snprintf(_thread_name, sizeof(_thread_name), "motor_drive_%u", driver_index);
 
@@ -513,14 +519,14 @@ void AP_DroneCAN::init(uint8_t driver_index, bool enable_filters)
     //     return;
     // }
 
-    if (_wheel_can_id > 0) {
-        hal.util->snprintf(_thread_name, sizeof(_thread_name), "wheel_drive_t_%u", driver_index);
+    // if (_wheel_can_id > 0) {
+    //     hal.util->snprintf(_thread_name, sizeof(_thread_name), "wheel_drive_t_%u", driver_index);
 
-        if (!hal.scheduler->thread_create(FUNCTOR_BIND_MEMBER(&AP_DroneCAN::wheel_can_drive_loop, void), _thread_name, DRONECAN_STACK_SIZE, AP_HAL::Scheduler::PRIORITY_CAN, 0)) {
-            debug_dronecan(AP_CANManager::LOG_ERROR, "Can: couldn't create wheel drive thread\n\r");
-            return;
-        }
-    }
+    //     if (!hal.scheduler->thread_create(FUNCTOR_BIND_MEMBER(&AP_DroneCAN::wheel_can_drive_loop, void), _thread_name, DRONECAN_STACK_SIZE, AP_HAL::Scheduler::PRIORITY_CAN, 0)) {
+    //         debug_dronecan(AP_CANManager::LOG_ERROR, "Can: couldn't create wheel drive thread\n\r");
+    //         return;
+    //     }
+    // }
 
     // Create robot CAN TX thread for processing motor command queue
     hal.util->snprintf(_thread_name, sizeof(_thread_name), "robot_tx_%u", driver_index);
@@ -564,13 +570,14 @@ void AP_DroneCAN::motor_can_drive_loop(void) {
             continue;
         }
 
-        if (_wheel_can_id > 0) {
-            int32_t rpm = 5.0f;
-            int32_t speed_val = static_cast<uint32_t>(roundf(rpm * 101.0f * (5.0f / 3.0f)));
-            send_motor_drive(_wheel_can_id, rpm, speed_val);
+        // Send motor drive commands to all defined motor CAN IDs
+        for (uint8_t i = 0; i < 6; i++) {
+            int32_t position_val = (int32_t)roundf(_motor_position_deg[i] / 360.0f * (262144.0f));
+            send_motor_drive_position(_motor_can_id[i], position_val);
+            hal.scheduler->delay(1);
         }
 
-        hal.scheduler->delay(200);
+        hal.scheduler->delay(10);
     }
 }
 
@@ -600,21 +607,21 @@ void AP_DroneCAN::send_heartbeat(uint8_t can_id){
     write_aux_frame(txmsg, 10 * 1000);
 }
 
-void AP_DroneCAN::send_motor_drive(uint8_t can_id, int32_t rpm, int32_t speed_val){
+void AP_DroneCAN::send_motor_drive_position(uint8_t can_id, int32_t postion_val){
     AP_HAL::CANFrame txmsg {};
 
-    txmsg.id = 0x01;  //can_id is 1
+    txmsg.id = can_id;  //can_id is 1
     txmsg.dlc = 5;
-    txmsg.data[0] = 0x1D;
-    txmsg.data[1] = (speed_val >> 0)  & 0xFF;  
-    txmsg.data[2] = (speed_val >> 8)  & 0xFF;
-    txmsg.data[3] = (speed_val >> 16) & 0xFF;
-    txmsg.data[4] = (speed_val >> 24) & 0xFF;  
+    txmsg.data[0] = 0x1E;
+    txmsg.data[1] = (postion_val >> 0);  
+    txmsg.data[2] = (postion_val >> 8);
+    txmsg.data[3] = (postion_val >> 16);
+    txmsg.data[4] = (postion_val >> 24);  
     
     // 记录发送的CAN消息到日志
-    AP::logger().Write_MessageF("CAN TX: Motor Drive ID=0x%02X cmd=0x%02X speed=%d rpm=%d", 
+    AP::logger().Write_MessageF("CAN TX: Motor Drive ID=0x%02X cmd=0x%02X position=%d", 
                                (unsigned)txmsg.id, (unsigned)txmsg.data[0], 
-                               (int)speed_val, (int)rpm);
+                                (int)postion_val);
     
     write_aux_frame(txmsg, 10 * 1000);
 }
@@ -2069,13 +2076,15 @@ void AP_DroneCAN::robot_can_tx_loop(void)
 
         // Get the queue singleton
         CAN_Robot_Tx_Queue* queue = CAN_Robot_Tx_Queue::get_singleton();
-        if (!queue) {
-            hal.scheduler->delay(10);
-            continue;
-        }
+        // if (!queue) {
+        //     hal.scheduler->delay(10);
+        //     continue;
+        // }
 
         // Process commands from the queue
         CAN_Robot_Tx_Queue::MotorCommand cmd;
+        for (uint8_t i = 0; i < 6; i++) {  
+            // write CAN txmsg for 6 motors in one time, including GET_POSITION, GET_VELOCITY, GET_CURRENT
         if (queue->get_next_command(cmd)) {
             // Create CAN frame using unified method
             AP_HAL::CANFrame frame = CAN_Robot_Tx_Process::create_motor_frame(
@@ -2083,7 +2092,7 @@ void AP_DroneCAN::robot_can_tx_loop(void)
                 cmd.motor_id, 
                 cmd.motor_type, 
                 cmd.mode, 
-                cmd.target_value
+                cmd.target_value // GET_POSITION, GET_VELOCITY, GET_CURRENT ARE ALL SET TO 0.
             );
             
             // Send the frame if it was created successfully
@@ -2110,11 +2119,27 @@ void AP_DroneCAN::robot_can_tx_loop(void)
             }
         } else {
             // No commands in queue, sleep for a bit
-            hal.scheduler->delay_microseconds(100);
+            hal.scheduler->delay_microseconds(10);
         }
-        
+
         // Log queue status periodically
         queue->log_status();
+
+        AP_HAL::CANFrame GET_frame{};
+        GET_frame.id = cmd.motor_id;
+        GET_frame.dlc = 1;
+        GET_frame.data[0] = 0x08;
+        write_aux_frame(GET_frame, 10 * 1000); // GET_POSITION
+
+        GET_frame.data[0] = 0x06;
+        write_aux_frame(GET_frame, 10 * 1000); // GET_VELOCITY
+
+        GET_frame.data[0] = 0x04;
+        write_aux_frame(GET_frame, 10 * 1000);
+
+        
+        }
+
     }
 }
 

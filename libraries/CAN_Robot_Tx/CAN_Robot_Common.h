@@ -6,10 +6,10 @@
 #include <stdbool.h>
 
 // MIT motor command types
-#define MIT_CMD_POSITION      0x01
-#define MIT_CMD_SPEED        0x02
-#define MIT_CMD_CURRENT      0x03
-#define MIT_CMD_SET_ID       0x05
+#define MIT_CMD_POSITION     0x1E
+#define MIT_CMD_SPEED        0x1D
+#define MIT_CMD_CURRENT      0x1C
+#define MIT_CMD_SET_ID       0x1B
 
 // KEGU motor command types
 #define KEGU_CMD_INIT        0x01

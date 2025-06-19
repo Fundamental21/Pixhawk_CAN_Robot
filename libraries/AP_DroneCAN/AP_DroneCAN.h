@@ -185,7 +185,7 @@ private:
 
     void send_heartbeat(uint8_t can_id);
 
-    void send_motor_drive(uint8_t can_id, int32_t rpm, int32_t speed_val);
+    void send_motor_drive_position(uint8_t can_id, int32_t position_val);
 
     int32_t calc_wheel_erpm(int16_t pwm);
 

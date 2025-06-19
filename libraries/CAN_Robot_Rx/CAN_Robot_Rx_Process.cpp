@@ -33,7 +33,7 @@ void CAN_Robot_Rx_Process::process_all_rx_messages(void)
     
     CAN_Robot_Rx_Queue::CANRxMessage msg;
     uint32_t processed_count = 0;
-    
+    for (uint8_t i = 0; i < 3; i++) {
     while (rx_queue->get_next_message(msg)) {
         // 根据Motor ID类型分发消息
         if (is_mit_motor_id(msg.motor_id)) {
@@ -54,9 +54,11 @@ void CAN_Robot_Rx_Process::process_all_rx_messages(void)
             break;
         }
     }
-    
     // 定期记录状态
     log_motor_status();
+    }
+    
+    
 }
 
 void CAN_Robot_Rx_Process::process_mit_motor_message(const CAN_Robot_Rx_Queue::CANRxMessage &msg)

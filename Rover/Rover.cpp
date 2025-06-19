@@ -353,7 +353,7 @@ void Rover::robot_arm_control_loop()
         }
         
         // 直接调用电机控制处理函数
-        // MIT_Motor::MotorControl_Handler(m);
+        MIT_Motor::MotorControl_Handler(m);
     }
 }
 
