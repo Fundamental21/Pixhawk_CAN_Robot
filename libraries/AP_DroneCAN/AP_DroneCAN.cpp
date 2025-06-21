@@ -95,8 +95,9 @@ extern const AP_HAL::HAL& hal;
 
 // Motor CAN IDs for drive loop
 static const uint8_t _motor_can_id[] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
-static const float _motor_position_deg[] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+//static const float _motor_position_deg[] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 //static const float _motor_position_deg[] = {90.0f, 90.0f, 90.0f, 90.0f, 90.0f, 90.0f};
+static const float _motor_position_deg[] = {-90.0f, -90.0f, -90.0f, -90.0f, -90.0f, -90.0f};
 static const uint8_t _motor_can_id_count = sizeof(_motor_can_id) / sizeof(_motor_can_id[0]);
 
 // Translation of all messages from DroneCAN structures into AP structures is done
@@ -2068,78 +2069,87 @@ bool AP_DroneCAN::write_aux_frame(AP_HAL::CANFrame &out_frame, const uint64_t ti
 // Robot CAN TX thread loop - processes motor command queue
 void AP_DroneCAN::robot_can_tx_loop(void)
 {
+    // Motor IDs for 6 motors (1-6)
+    static const uint8_t motor_ids[6] = {1, 2, 3, 4, 5, 6};
+    
     while (true) {
         if (!_initialized) {
             hal.scheduler->delay_microseconds(1000);
             continue;
         }
 
-        // Get the queue singleton
+        // Get the queue singleton with proper null check
         CAN_Robot_Tx_Queue* queue = CAN_Robot_Tx_Queue::get_singleton();
-        // if (!queue) {
-        //     hal.scheduler->delay(10);
-        //     continue;
-        // }
+        if (!queue) {
+            hal.scheduler->delay(10);
+            continue;
+        }
 
-        // Process commands from the queue
-        CAN_Robot_Tx_Queue::MotorCommand cmd;
-        for (uint8_t i = 0; i < 6; i++) {  
-            // write CAN txmsg for 6 motors in one time, including GET_POSITION, GET_VELOCITY, GET_CURRENT
-        if (queue->get_next_command(cmd)) {
-            // Create CAN frame using unified method
-            AP_HAL::CANFrame frame = CAN_Robot_Tx_Process::create_motor_frame(
-                cmd.can_id, 
-                cmd.motor_id, 
-                cmd.motor_type, 
-                cmd.mode, 
-                cmd.target_value // GET_POSITION, GET_VELOCITY, GET_CURRENT ARE ALL SET TO 0.
-            );
-            
-            // Send the frame if it was created successfully
-            if (frame.dlc > 0) {
-                if (write_aux_frame(frame, 10 * 1000)) {
-                    // Mark command as processed only if sent successfully
-                    queue->mark_command_processed();
-                    
-                    // Log successful transmission
-                    debug_dronecan(AP_CANManager::LOG_DEBUG, 
-                                 "Robot CAN TX: ID=0x%X Mode=%u Value=%.2f\\n", 
-                                 (unsigned)cmd.can_id, (unsigned)cmd.mode, (double)cmd.target_value);
+        bool any_command_processed = false;
+        
+        // Process all 6 motors in one loop: set position + get status
+        for (uint8_t i = 0; i < 6; i++) {
+            // 1. Try to get and send position command for this motor
+            CAN_Robot_Tx_Queue::MotorCommand cmd;
+            if (queue->get_next_command(cmd)) {
+                any_command_processed = true;
+                
+                // Create CAN frame for position control
+                AP_HAL::CANFrame frame = CAN_Robot_Tx_Process::create_motor_frame(
+                    cmd.can_id, 
+                    cmd.motor_id, 
+                    cmd.motor_type, 
+                    cmd.mode, 
+                    cmd.target_value
+                );
+                
+                // Send position command
+                if (frame.dlc > 0) {
+                    if (write_aux_frame(frame, 10 * 1000)) {
+                        queue->mark_command_processed();
+                        debug_dronecan(AP_CANManager::LOG_DEBUG, 
+                                     "Motor%u Position: ID=0x%X Value=%.2f", 
+                                     i + 1, (unsigned)cmd.motor_id, (double)cmd.target_value);
+                    } else {
+                        debug_dronecan(AP_CANManager::LOG_ERROR, 
+                                     "Motor%u Position failed: ID=0x%X", 
+                                     i + 1, (unsigned)cmd.motor_id);
+                    }
                 } else {
-                    // Log transmission failure
+                    queue->mark_command_processed();
                     debug_dronecan(AP_CANManager::LOG_ERROR, 
-                                 "Robot CAN TX failed: ID=0x%X\\n", (unsigned)cmd.can_id);
+                                 "Motor%u Invalid frame: Type=%u Mode=%u", 
+                                 i + 1, (unsigned)cmd.motor_type, (unsigned)cmd.mode);
                 }
-            } else {
-                // Invalid frame - mark as processed to avoid infinite loop
-                queue->mark_command_processed();
-                debug_dronecan(AP_CANManager::LOG_ERROR, 
-                             "Invalid motor frame: Type=%u Mode=%u\\n", 
-                             (unsigned)cmd.motor_type, (unsigned)cmd.mode);
+                
+                //hal.scheduler->delay_microseconds(300);
             }
-        } else {
-            // No commands in queue, sleep for a bit
-            hal.scheduler->delay_microseconds(10);
+            
+            // 2. Always send GET commands for current motor using motor_ids array
+            AP_HAL::CANFrame GET_frame{};
+            GET_frame.id = motor_ids[i];  // Use motor_ids to ensure correct ID
+            GET_frame.dlc = 1;
+            
+            // GET_POSITION
+            GET_frame.data[0] = 0x08;
+            write_aux_frame(GET_frame, 10 * 1000); // GET_POSITION
+
+            GET_frame.data[0] = 0x06;
+            write_aux_frame(GET_frame, 10 * 1000); // GET_VELOCITY
+
+            GET_frame.data[0] = 0x04;
+            write_aux_frame(GET_frame, 10 * 1000); // GET_CURRENT
+        }
+        
+        if (!any_command_processed) {
+            // No commands in queue, sleep for longer to reduce CPU usage
+            hal.scheduler->delay(10);
         }
 
         // Log queue status periodically
-        queue->log_status();
-
-        AP_HAL::CANFrame GET_frame{};
-        GET_frame.id = cmd.motor_id;
-        GET_frame.dlc = 1;
-        GET_frame.data[0] = 0x08;
-        write_aux_frame(GET_frame, 10 * 1000); // GET_POSITION
-
-        GET_frame.data[0] = 0x06;
-        write_aux_frame(GET_frame, 10 * 1000); // GET_VELOCITY
-
-        GET_frame.data[0] = 0x04;
-        write_aux_frame(GET_frame, 10 * 1000);
-
-        
+        if (queue) {
+            queue->log_status();
         }
-
     }
 }
 

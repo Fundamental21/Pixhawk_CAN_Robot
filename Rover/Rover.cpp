@@ -80,7 +80,7 @@ SCHED_TASK_CLASS arguments:
 const AP_Scheduler::Task Rover::scheduler_tasks[] = {
     //         Function name,          Hz,     us,
 
-    SCHED_TASK(robot_arm_control_loop,100,    200,   1),  // 100Hz control loop  
+    SCHED_TASK(robot_arm_control_loop,100,    200,   1),  // 100Hz control loop - TEMPORARILY DISABLED
     SCHED_TASK(read_radio,             50,    200,   3),
     SCHED_TASK(ahrs_update,           400,    400,   6),
     SCHED_TASK(read_rangefinders,      50,    200,   9),
@@ -202,58 +202,16 @@ void Rover::robot_arm_init()
 
 // Define predefined joint positions (example data - replace with actual positions)
 // This is a file-scope constant array, not a class member
-static const float predefined_joints[50][6] = {
+static const float predefined_joints[8][6] = {
     // Example joint positions - replace with your actual robot arm positions
-    {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
-    {0.1f, 0.1f, 0.1f, 0.1f, 0.1f, 0.1f},
-    {0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f},
-    {0.3f, 0.3f, 0.3f, 0.3f, 0.3f, 0.3f},
-    {0.4f, 0.4f, 0.4f, 0.4f, 0.4f, 0.4f},
-    {0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f},
-    {0.6f, 0.6f, 0.6f, 0.6f, 0.6f, 0.6f},
-    {0.7f, 0.7f, 0.7f, 0.7f, 0.7f, 0.7f},
-    {0.8f, 0.8f, 0.8f, 0.8f, 0.8f, 0.8f},
-    {0.9f, 0.9f, 0.9f, 0.9f, 0.9f, 0.9f},
-    {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},
-    {1.1f, 1.1f, 1.1f, 1.1f, 1.1f, 1.1f},
-    {1.2f, 1.2f, 1.2f, 1.2f, 1.2f, 1.2f},
-    {1.3f, 1.3f, 1.3f, 1.3f, 1.3f, 1.3f},
-    {1.4f, 1.4f, 1.4f, 1.4f, 1.4f, 1.4f},
-    {1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f},
-    {1.6f, 1.6f, 1.6f, 1.6f, 1.6f, 1.6f},
-    {1.7f, 1.7f, 1.7f, 1.7f, 1.7f, 1.7f},
-    {1.8f, 1.8f, 1.8f, 1.8f, 1.8f, 1.8f},
-    {1.9f, 1.9f, 1.9f, 1.9f, 1.9f, 1.9f},
-    {2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f},
-    {2.1f, 2.1f, 2.1f, 2.1f, 2.1f, 2.1f},
-    {2.2f, 2.2f, 2.2f, 2.2f, 2.2f, 2.2f},
-    {2.3f, 2.3f, 2.3f, 2.3f, 2.3f, 2.3f},
-    {2.4f, 2.4f, 2.4f, 2.4f, 2.4f, 2.4f},
-    {2.5f, 2.5f, 2.5f, 2.5f, 2.5f, 2.5f},
-    {2.4f, 2.4f, 2.4f, 2.4f, 2.4f, 2.4f},
-    {2.3f, 2.3f, 2.3f, 2.3f, 2.3f, 2.3f},
-    {2.2f, 2.2f, 2.2f, 2.2f, 2.2f, 2.2f},
-    {2.1f, 2.1f, 2.1f, 2.1f, 2.1f, 2.1f},
-    {2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f},
-    {1.9f, 1.9f, 1.9f, 1.9f, 1.9f, 1.9f},
-    {1.8f, 1.8f, 1.8f, 1.8f, 1.8f, 1.8f},
-    {1.7f, 1.7f, 1.7f, 1.7f, 1.7f, 1.7f},
-    {1.6f, 1.6f, 1.6f, 1.6f, 1.6f, 1.6f},
-    {1.5f, 1.5f, 1.5f, 1.5f, 1.5f, 1.5f},
-    {1.4f, 1.4f, 1.4f, 1.4f, 1.4f, 1.4f},
-    {1.3f, 1.3f, 1.3f, 1.3f, 1.3f, 1.3f},
-    {1.2f, 1.2f, 1.2f, 1.2f, 1.2f, 1.2f},
-    {1.1f, 1.1f, 1.1f, 1.1f, 1.1f, 1.1f},
-    {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},
-    {0.9f, 0.9f, 0.9f, 0.9f, 0.9f, 0.9f},
-    {0.8f, 0.8f, 0.8f, 0.8f, 0.8f, 0.8f},
-    {0.7f, 0.7f, 0.7f, 0.7f, 0.7f, 0.7f},
-    {0.6f, 0.6f, 0.6f, 0.6f, 0.6f, 0.6f},
-    {0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f},
-    {0.4f, 0.4f, 0.4f, 0.4f, 0.4f, 0.4f},
-    {0.3f, 0.3f, 0.3f, 0.3f, 0.3f, 0.3f},
-    {0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f},
-    {0.1f, 0.1f, 0.1f, 0.1f, 0.1f, 0.1f}
+    {45.0f, 45.0f, 45.0f, 45.0f, 45.0f, 45.0f},
+    {90.0f, 90.0f, 90.0f, 90.0f, 90.0f, 90.0f},
+    {135.0f, 135.0f, 135.0f, 135.0f, 135.0f, 135.0f},
+    {180.0f, 180.0f, 180.0f, 180.0f, 180.0f, 180.0f},
+    {135.0f, 135.0f, 135.0f, 135.0f, 135.0f, 135.0f},
+    {90.0f, 90.0f, 90.0f, 90.0f, 90.0f, 90.0f},
+    {45.0f, 45.0f, 45.0f, 45.0f, 45.0f, 45.0f},
+    {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}
 };
 
 void Rover::robot_arm_control_loop()
@@ -307,7 +265,7 @@ void Rover::robot_arm_control_loop()
         for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
             MotorInstance* m = joint_motor_list[i];
             m->target_value = m->last_position;
-            MIT_Motor::MotorControl_Handler(m);
+            // MIT_Motor::MotorControl_Handler(m);
         }
         tx_initialized = true;
     }
@@ -318,43 +276,81 @@ void Rover::robot_arm_control_loop()
     
     // 可自定义的位置切换时间间隔（单位：100Hz循环次数）
     // 例如：100 = 1秒, 200 = 2秒, 50 = 0.5秒
-    static const uint32_t POSITION_SWITCH_INTERVAL = 100; // 默认1秒切换一次
+    static const uint32_t POSITION_SWITCH_INTERVAL = 500; // 默认10秒切换一次 (1000/100Hz = 10秒)
     
     // Change position based on custom interval
+    static bool first_run = true;
+    
+    // 第一次运行时立即发送第一个位置
+    if (first_run) {
+        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
+            MotorInstance* m = joint_motor_list[i];
+            
+            // 使用switch case为每个关节设置目标值
+            switch (i) {
+                case 0:
+                    m->target_value = predefined_joints[point_index][0];
+                    break;
+                case 1:
+                    m->target_value = predefined_joints[point_index][1];
+                    break;
+                case 2:
+                    m->target_value = predefined_joints[point_index][2];
+                    break;
+                case 3:
+                    m->target_value = predefined_joints[point_index][3];
+                    break;
+                case 4:
+                    m->target_value = predefined_joints[point_index][4];
+                    break;                    
+                case 5:
+                    m->target_value = predefined_joints[point_index][5];
+                    break;                                   
+            }
+            
+            // 发送第一个位置到队列
+            MIT_Motor::MotorControl_Handler(m);
+        }
+        first_run = false;
+    }
+    
+    // 每500个循环（5秒）切换到下一个位置
     if (point_counter >= POSITION_SWITCH_INTERVAL) {
         point_counter = 0;
-        point_index = (point_index + 1) % 50; // Cycle through all 50 positions
-    }
-    point_counter++;
-    
-    for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
-        MotorInstance* m = joint_motor_list[i];
+        point_index = (point_index + 1) % 8; // Cycle through all 8 positions
         
-        // 使用switch case为每个关节设置目标值
-        switch (i) {
-            case 0:
-                m->target_value = predefined_joints[point_index][0] * (180.0f / M_PI);
-                break;
-            case 1:
-                m->target_value = predefined_joints[point_index][1] * (180.0f / M_PI);
-                break;
-            case 2:
-                m->target_value = predefined_joints[point_index][2] * (180.0f / M_PI);
-                break;
-            case 3:
-                m->target_value = predefined_joints[point_index][3] * (180.0f / M_PI);
-                break;
-            case 4:
-                m->target_value = predefined_joints[point_index][4] * (180.0f / M_PI);
-                break;                    
-            case 5:
-                m->target_value = predefined_joints[point_index][5] * (180.0f / M_PI);
-                break;                                    
+        // 只在切换位置时发送位置数据到队列
+        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
+            MotorInstance* m = joint_motor_list[i];
+            
+            // 使用switch case为每个关节设置目标值
+            switch (i) {
+                case 0:
+                    m->target_value = predefined_joints[point_index][0];
+                    break;
+                case 1:
+                    m->target_value = predefined_joints[point_index][1];
+                    break;
+                case 2:
+                    m->target_value = predefined_joints[point_index][2];
+                    break;
+                case 3:
+                    m->target_value = predefined_joints[point_index][3];
+                    break;
+                case 4:
+                    m->target_value = predefined_joints[point_index][4];
+                    break;                    
+                case 5:
+                    m->target_value = predefined_joints[point_index][5];
+                    break;                                   
+            }
+            
+            // 只在位置切换时发送到队列
+            MIT_Motor::MotorControl_Handler(m);
         }
-        
-        // 直接调用电机控制处理函数
-        MIT_Motor::MotorControl_Handler(m);
     }
+    
+    point_counter++;
 }
 
 

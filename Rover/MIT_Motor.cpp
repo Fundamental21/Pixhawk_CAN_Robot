@@ -152,20 +152,13 @@ void MotorControl_Handler(MotorInstance* motor)
     // Convert control mode to queue mode (both use same enum values)
     MotorControlMode queue_mode = motor->mode;
 
-    // Queue the command
+    // Queue the command - only send position control command
     queue->queue_motor_command(motor->can_id, motor->motor_id, 
                              motor->type == MOTOR_TYPE_MIT ? MOTOR_TYPE_MIT : MOTOR_TYPE_KEGU,
                              queue_mode, motor->target_value);
     
-    // Request motor status
-    if (motor->type == MOTOR_TYPE_MIT) {
-        queue->queue_motor_command(motor->can_id, motor->motor_id, MOTOR_TYPE_MIT,
-                                 CTRL_MODE_CURRENT, 0); // get current
-        queue->queue_motor_command(motor->can_id, motor->motor_id, MOTOR_TYPE_MIT,
-                                 CTRL_MODE_VELOCITY, 0); // get velocity
-        queue->queue_motor_command(motor->can_id, motor->motor_id, MOTOR_TYPE_MIT,
-                                 CTRL_MODE_POSITION, 0); // get position
-    }
+    // GET requests are handled by robot_can_tx_loop in AP_DroneCAN.cpp
+    // Removed duplicate GET requests to avoid CAN bus congestion
 }
 //---------------------Motor Control Handler---------------------
 
