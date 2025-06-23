@@ -80,7 +80,7 @@ SCHED_TASK_CLASS arguments:
 const AP_Scheduler::Task Rover::scheduler_tasks[] = {
     //         Function name,          Hz,     us,
 
-    SCHED_TASK(robot_arm_control_loop,100,    200,   1),  // 100Hz control loop - TEMPORARILY DISABLED
+    SCHED_TASK(robot_arm_control_loop,100,    200,   1),  // 100Hz control loop 
     SCHED_TASK(read_radio,             50,    200,   3),
     SCHED_TASK(ahrs_update,           400,    400,   6),
     SCHED_TASK(read_rangefinders,      50,    200,   9),
@@ -275,8 +275,8 @@ void Rover::robot_arm_control_loop()
     static uint32_t point_index = 0;
     
     // 可自定义的位置切换时间间隔（单位：100Hz循环次数）
-    // 例如：100 = 1秒, 200 = 2秒, 50 = 0.5秒
-    static const uint32_t POSITION_SWITCH_INTERVAL = 500; // 默认10秒切换一次 (1000/100Hz = 10秒)
+    // 例如：100 = 1秒, 200 = 2秒, 500 = 5秒, 1000 = 10秒
+    static const uint32_t POSITION_SWITCH_INTERVAL = 500; // 5秒切换一次 (500/100Hz = 5秒)
     
     // Change position based on custom interval
     static bool first_run = true;

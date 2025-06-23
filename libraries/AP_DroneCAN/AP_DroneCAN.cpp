@@ -2085,14 +2085,14 @@ void AP_DroneCAN::robot_can_tx_loop(void)
             continue;
         }
 
-        bool any_command_processed = false;
+        // bool any_command_processed = false;
         
         // Process all 6 motors in one loop: set position + get status
         for (uint8_t i = 0; i < 6; i++) {
             // 1. Try to get and send position command for this motor
             CAN_Robot_Tx_Queue::MotorCommand cmd;
             if (queue->get_next_command(cmd)) {
-                any_command_processed = true;
+                // any_command_processed = true;
                 
                 // Create CAN frame for position control
                 AP_HAL::CANFrame frame = CAN_Robot_Tx_Process::create_motor_frame(
@@ -2122,9 +2122,9 @@ void AP_DroneCAN::robot_can_tx_loop(void)
                                  i + 1, (unsigned)cmd.motor_type, (unsigned)cmd.mode);
                 }
                 
-                //hal.scheduler->delay_microseconds(300);
+                //hal.scheduler->delay_microseconds(10);
             }
-            
+            hal.scheduler->delay_microseconds(500);
             // 2. Always send GET commands for current motor using motor_ids array
             AP_HAL::CANFrame GET_frame{};
             GET_frame.id = motor_ids[i];  // Use motor_ids to ensure correct ID
@@ -2133,18 +2133,19 @@ void AP_DroneCAN::robot_can_tx_loop(void)
             // GET_POSITION
             GET_frame.data[0] = 0x08;
             write_aux_frame(GET_frame, 10 * 1000); // GET_POSITION
-
+            hal.scheduler->delay_microseconds(500);
             GET_frame.data[0] = 0x06;
             write_aux_frame(GET_frame, 10 * 1000); // GET_VELOCITY
-
+            hal.scheduler->delay_microseconds(500);
             GET_frame.data[0] = 0x04;
             write_aux_frame(GET_frame, 10 * 1000); // GET_CURRENT
+            hal.scheduler->delay_microseconds(500);
         }
         
-        if (!any_command_processed) {
-            // No commands in queue, sleep for longer to reduce CPU usage
-            hal.scheduler->delay(10);
-        }
+        // if (!any_command_processed) {
+        //     // No commands in queue, sleep for longer to reduce CPU usage
+        //     hal.scheduler->delay(10);
+        // }
 
         // Log queue status periodically
         if (queue) {

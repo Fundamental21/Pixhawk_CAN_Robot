@@ -5,14 +5,14 @@
 #include <AP_Common/AP_Common.h>
 #include "../CAN_Robot_Tx/CAN_Robot_Common.h"
 
-#define CAN_RX_QUEUE_SIZE 100  // 队列大小
+#define CAN_RX_QUEUE_SIZE 500  // 队列大小
 
 // CAN接收消息队列类
 class CAN_Robot_Rx_Queue {
 public:
     // CAN接收消息结构
     struct CANRxMessage {
-        uint32_t motor_id;      // MIT电机ID (原CAN消息ID)
+        uint32_t motor_id;      // MIT电机ID 
         uint8_t can_id;         // CAN总线ID (0=CAN1, 1=CAN2)
         uint8_t dlc;           // 数据长度
         uint8_t data[8];       // 数据内容
