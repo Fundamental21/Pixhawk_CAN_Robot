@@ -14,7 +14,6 @@
 */
 
 #include "MIT_Motor.h"
-#include <CAN_Robot_interpolation/CAN_Robot_interpolation.h>
 
 // Include CAN Robot Rx modules to access received motor status
 #include <CAN_Robot_Rx/CAN_Robot_Rx_Queue.h>
@@ -262,99 +261,11 @@ float get_motor_velocity(uint8_t can_id, uint8_t motor_id)
     return NAN;  // Return NAN to indicate no valid data
 }
 
-//---------------------Trajectory Interpolation Functions---------------------
-// 初始化轨迹插值系统
-void init_trajectory_interpolation()
-{
-    CAN_Robot_Interpolation& interpolator = CAN_Robot_Interpolation::get_instance();
-    interpolator.init();
-}
-
-// 添加关键点到稀疏队列
-bool add_key_point(const float joint_angles[6])
-{
-    // 直接添加到直接传递队列，跳过插值系统
-    return sparse_to_dense_queue.push(joint_angles);
-}
-
-// 获取当前电机位置并添加到稀疏队列
-bool add_current_motor_positions()
-{
-    CAN_Robot_Interpolation& interpolator = CAN_Robot_Interpolation::get_instance();
-    
-    // 检查是否所有运动都已完成
-    if (!interpolator.is_motion_complete()) {
-        return false;
-    }
-    
-    JointAngles current_angles;
-    // 获取6个关节电机的当前位置
-    for (uint8_t i = 0; i < 6; i++) {
-        // 假设关节电机在motor_instances[0][i]
-        if (i < MOTORS_PER_CAN) {
-            current_angles.angles[i] = get_motor_position(motor_instances[0][i].can_id, 
-                                                       motor_instances[0][i].motor_id);
-        } else {
-            current_angles.angles[i] = 0.0f; // 默认值
-        }
-    }
-    
-    interpolator.set_all_joints_target(current_angles);
-    return true;
-}
-
-// 从稠密队列获取下一个轨迹点
-bool get_next_trajectory_point(float joint_angles[6])
-{
-    // 直接从传递队列获取下一个轨迹点
-    return sparse_to_dense_queue.pop(joint_angles);
-}
-
-// 生成轨迹插值 - 5Hz调用，支持指定处理点数
-bool generate_trajectory_interpolation(float Ts, float F, float ub_a, uint8_t max_points)
-{
-    CAN_Robot_Interpolation& interpolator = CAN_Robot_Interpolation::get_instance();
-    
-    // 执行插值更新
-    return interpolator.execute_interpolation();
-}
-
-// 检查稠密队列状态
-bool is_dense_queue_empty()
-{
-    // 直接传递模式下，稠密队列就是我们的传递队列
-    return sparse_to_dense_queue.is_empty();
-}
-
-// 检查稀疏队列状态
-bool is_sparse_queue_empty()
-{
-    // 直接传递模式下，稀疏队列就是我们的传递队列
-    return sparse_to_dense_queue.is_empty();
-}
-
-// 获取稀疏队列中的点数
-uint8_t sparse_queue_count()
-{
-    // 返回直接传递队列中的点数
-    return sparse_to_dense_queue.count;
-}
 
 
 
-// 从稀疏队列获取下一个点（直接传递用）
-bool get_next_sparse_point(float joint_angles[6])
-{
-    // 从内部队列获取点
-    return sparse_to_dense_queue.pop(joint_angles);
-}
 
-// 添加点到稠密队列（直接传递用）
-bool add_dense_point(const float joint_angles[6])
-{
-    // 添加到内部队列
-    return sparse_to_dense_queue.push(joint_angles);
-}
+
 
 
 

@@ -23,6 +23,9 @@ enum LoggingParameters {
     LOG_NTUN_MSG,
     LOG_STEERING_MSG,
     LOG_GUIDEDTARGET_MSG,
+    LOG_ROBOT_ARM_MSG,
+    LOG_ROBOT_ARM2_MSG,
+    LOG_INTERP_TRAJ_MSG,
 };
 
 #define MASK_LOG_ATTITUDE_FAST  (1<<0)

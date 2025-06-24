@@ -39,6 +39,7 @@
 #include <CAN_Robot_Rx/CAN_Robot_Rx_Process.h>
 #include <CAN_Robot_Tx/CAN_Robot_Tx_Queue.h>
 #include <CAN_Robot_Tx/CAN_Robot_Tx_Process.h>
+#include <CAN_Robot_interpolation/TrajectoryInterpolator.h>
 
 #define FORCE_VERSION_H_INCLUDE
 #include "version.h"
@@ -216,13 +217,10 @@ static const float predefined_joints[8][6] = {
 
 void Rover::robot_arm_control_loop()
 {
-
     if (!arm_initialized) {
         robot_arm_init();
         return;
     }
-    
-
 
     // Process CAN Rx messages and get motor status data
     // Initialize CAN Rx modules if not already done
@@ -255,6 +253,24 @@ void Rover::robot_arm_control_loop()
         }
     }
 
+#if HAL_LOGGING_ENABLED
+    // Log robot arm motor data at 5Hz
+    static uint32_t last_log_time_ms = 0;
+    uint32_t now_ms = AP_HAL::millis();
+    if (now_ms - last_log_time_ms >= 200) {  // Log every 200ms (5Hz)
+        Log_Write_RobotArm1();  // Motors 1-3
+        Log_Write_RobotArm2();  // Motors 4-6
+        last_log_time_ms = now_ms;
+    }
+    
+    // Log interpolated trajectory data at 10Hz
+    static uint32_t last_interp_log_time_ms = 0;
+    if (now_ms - last_interp_log_time_ms >= 100) {  // Log every 100ms (10Hz)
+        Log_Write_InterpolatedTrajectory();
+        last_interp_log_time_ms = now_ms;
+    }
+#endif
+
     // Initialize CAN Tx module if not already done
     static bool tx_initialized = false;
     if (!tx_initialized) {
@@ -265,92 +281,73 @@ void Rover::robot_arm_control_loop()
         for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
             MotorInstance* m = joint_motor_list[i];
             m->target_value = m->last_position;
-            // MIT_Motor::MotorControl_Handler(m);
         }
+        
         tx_initialized = true;
     }
 
-    // 100Hz motor control - direct position control without interpolation
-    static uint32_t point_counter = 0;
-    static uint32_t point_index = 0;
-    
-    // 可自定义的位置切换时间间隔（单位：100Hz循环次数）
-    // 例如：100 = 1秒, 200 = 2秒, 500 = 5秒, 1000 = 10秒
-    static const uint32_t POSITION_SWITCH_INTERVAL = 500; // 5秒切换一次 (500/100Hz = 5秒)
-    
-    // Change position based on custom interval
-    static bool first_run = true;
-    
-    // 第一次运行时立即发送第一个位置
-    if (first_run) {
-        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
-            MotorInstance* m = joint_motor_list[i];
-            
-            // 使用switch case为每个关节设置目标值
-            switch (i) {
-                case 0:
-                    m->target_value = predefined_joints[point_index][0];
-                    break;
-                case 1:
-                    m->target_value = predefined_joints[point_index][1];
-                    break;
-                case 2:
-                    m->target_value = predefined_joints[point_index][2];
-                    break;
-                case 3:
-                    m->target_value = predefined_joints[point_index][3];
-                    break;
-                case 4:
-                    m->target_value = predefined_joints[point_index][4];
-                    break;                    
-                case 5:
-                    m->target_value = predefined_joints[point_index][5];
-                    break;                                   
-            }
-            
-            // 发送第一个位置到队列
-            MIT_Motor::MotorControl_Handler(m);
-        }
-        first_run = false;
-    }
-    
-    // 每500个循环（5秒）切换到下一个位置
-    if (point_counter >= POSITION_SWITCH_INTERVAL) {
-        point_counter = 0;
-        point_index = (point_index + 1) % 8; // Cycle through all 8 positions
+    // Initialize trajectory interpolator separately
+    static bool interpolator_initialized = false;
+    if (!interpolator_initialized) {
+        // 初始化轨迹插值器
+        arm_interpolator.init(0.01f, 10.0f, 100.0f); // Ts=0.01s, Vmax=10deg/s, Amax=100deg/s²
         
-        // 只在切换位置时发送位置数据到队列
+        // 设置初始位置为当前电机位置
+        float initial_pos[JOINT_DOF];
         for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
-            MotorInstance* m = joint_motor_list[i];
-            
-            // 使用switch case为每个关节设置目标值
-            switch (i) {
-                case 0:
-                    m->target_value = predefined_joints[point_index][0];
-                    break;
-                case 1:
-                    m->target_value = predefined_joints[point_index][1];
-                    break;
-                case 2:
-                    m->target_value = predefined_joints[point_index][2];
-                    break;
-                case 3:
-                    m->target_value = predefined_joints[point_index][3];
-                    break;
-                case 4:
-                    m->target_value = predefined_joints[point_index][4];
-                    break;                    
-                case 5:
-                    m->target_value = predefined_joints[point_index][5];
-                    break;                                   
-            }
-            
-            // 只在位置切换时发送到队列
-            MIT_Motor::MotorControl_Handler(m);
+            //MotorInstance* m = joint_motor_list[i];
+            //initial_pos[i] = m->last_position;
+            initial_pos[i] = 10.0f;
         }
+        arm_interpolator.set_initial_position(initial_pos);
+        
+        // 添加predefined_joints中的8行轨迹点到插值器队列
+        for (uint8_t point_idx = 0; point_idx < 8; point_idx++) {
+            bool is_final = (point_idx == 7); // 最后一个点设置为完全停止
+            arm_interpolator.add_trajectory_point(predefined_joints[point_idx], is_final);
+        }
+        
+
+        
+        interpolator_initialized = true;
+    }
+
+    // 使用插值器生成平滑的轨迹点
+    float interpolated_pos[JOINT_DOF];
+    arm_interpolator.update(interpolated_pos);
+    
+    // 计算插值速度（当前位置 - 前一次位置）/ 时间间隔
+    static bool first_interpolation = true;
+    if (!first_interpolation) {
+        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
+            interpolated_velocities[i] = (interpolated_pos[i] - prev_interpolated_pos[i]) / 0.01f; // deg/s
+        }
+    } else {
+        // 第一次插值，速度设为0
+        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
+            interpolated_velocities[i] = 0.0f;
+        }
+        first_interpolation = false;
     }
     
-    point_counter++;
+    // 保存当前位置供下次计算速度使用
+    for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
+        prev_interpolated_pos[i] = interpolated_pos[i];
+    }
+    
+    // 将插值结果发送给电机
+    for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
+        MotorInstance* m = joint_motor_list[i];
+        
+        // 更新目标位置
+        m->target_value = interpolated_pos[i];
+        
+        // 发送控制指令
+        MIT_Motor::MotorControl_Handler(m);
+    }
+    
+    // 轨迹执行完毕后保持最后位置
+    // 当队列为空时，机器人臂将保持在最后一个位置不动
 }
 
 
@@ -392,6 +389,10 @@ Rover::Rover(void) :
     memset(motor_positions, 0, sizeof(motor_positions));
     memset(motor_velocities, 0, sizeof(motor_velocities));
     memset(motor_currents, 0, sizeof(motor_currents));
+    
+    // Initialize interpolation tracking arrays
+    memset(prev_interpolated_pos, 0, sizeof(prev_interpolated_pos));
+    memset(interpolated_velocities, 0, sizeof(interpolated_velocities));
 }
 
 #if AP_SCRIPTING_ENABLED

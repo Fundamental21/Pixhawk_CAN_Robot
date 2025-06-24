@@ -23,6 +23,7 @@
 
 // Libraries
 #include "MIT_Motor.h"
+#include <CAN_Robot_interpolation/TrajectoryInterpolator.h>
 #include <AP_Common/AP_Common.h>
 #include <AP_HAL/AP_HAL.h>
 #include <AP_BattMonitor/AP_BattMonitor.h>          // Battery monitor library
@@ -139,6 +140,11 @@ private:
     float motor_positions[6];     // Current motor positions
     float motor_velocities[6];    // Current motor velocities  
     float motor_currents[6];      // Current motor currents
+    
+    // Trajectory interpolation for smooth robot arm motion
+    TrajectoryInterpolator arm_interpolator;
+    float prev_interpolated_pos[6];     // 前一次插值位置，用于计算速度
+    float interpolated_velocities[6];   // 计算得到的插值速度
     
     // Robot arm objects
     RobotArmConfig left_arm_config;
@@ -390,6 +396,9 @@ private:
     void Log_Write_Steering();
     void Log_Write_Throttle();
     void Log_Write_RC(void);
+    void Log_Write_RobotArm1();
+    void Log_Write_RobotArm2();
+    void Log_Write_InterpolatedTrajectory();
     void Log_Write_Vehicle_Startup_Messages();
     void Log_Read(uint16_t log_num, uint16_t start_page, uint16_t end_page);
     void log_init(void);

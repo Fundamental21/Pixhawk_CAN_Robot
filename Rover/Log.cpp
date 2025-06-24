@@ -240,6 +240,114 @@ void Rover::Log_Write_RC(void)
     }
 }
 
+// Robot Arm Motor Data logging structure - Motors 1-3
+struct PACKED log_RobotArm1 {
+    LOG_PACKET_HEADER;
+    uint64_t time_us;
+    float motor1_pos;
+    float motor1_vel;
+    float motor1_curr;
+    float motor2_pos;
+    float motor2_vel;
+    float motor2_curr;
+    float motor3_pos;
+    float motor3_vel;
+    float motor3_curr;
+};
+
+// Robot Arm Motor Data logging structure - Motors 4-6
+struct PACKED log_RobotArm2 {
+    LOG_PACKET_HEADER;
+    uint64_t time_us;
+    float motor4_pos;
+    float motor4_vel;
+    float motor4_curr;
+    float motor5_pos;
+    float motor5_vel;
+    float motor5_curr;
+    float motor6_pos;
+    float motor6_vel;
+    float motor6_curr;
+};
+
+// Interpolated Trajectory logging structure
+struct PACKED log_InterpolatedTrajectory {
+    LOG_PACKET_HEADER;
+    uint64_t time_us;
+    float interp_pos1;
+    float interp_pos2;
+    float interp_pos3;
+    float interp_pos4;
+    float interp_pos5;
+    float interp_pos6;
+    float interp_vel1;
+    float interp_vel2;
+    float interp_vel3;
+    float interp_vel4;
+    float interp_vel5;
+    float interp_vel6;
+};
+
+// Write robot arm motor data - Motors 1-3
+void Rover::Log_Write_RobotArm1()
+{
+    struct log_RobotArm1 pkt = {
+        LOG_PACKET_HEADER_INIT(LOG_ROBOT_ARM_MSG),
+        time_us         : AP_HAL::micros64(),
+        motor1_pos      : motor_positions[0],
+        motor1_vel      : motor_velocities[0],
+        motor1_curr     : motor_currents[0],
+        motor2_pos      : motor_positions[1],
+        motor2_vel      : motor_velocities[1],
+        motor2_curr     : motor_currents[1],
+        motor3_pos      : motor_positions[2],
+        motor3_vel      : motor_velocities[2],
+        motor3_curr     : motor_currents[2]
+    };
+    logger.WriteBlock(&pkt, sizeof(pkt));
+}
+
+// Write robot arm motor data - Motors 4-6
+void Rover::Log_Write_RobotArm2()
+{
+    struct log_RobotArm2 pkt = {
+        LOG_PACKET_HEADER_INIT(LOG_ROBOT_ARM2_MSG),
+        time_us         : AP_HAL::micros64(),
+        motor4_pos      : motor_positions[3],
+        motor4_vel      : motor_velocities[3],
+        motor4_curr     : motor_currents[3],
+        motor5_pos      : motor_positions[4],
+        motor5_vel      : motor_velocities[4],
+        motor5_curr     : motor_currents[4],
+        motor6_pos      : motor_positions[5],
+        motor6_vel      : motor_velocities[5],
+        motor6_curr     : motor_currents[5]
+    };
+    logger.WriteBlock(&pkt, sizeof(pkt));
+}
+
+// Write interpolated trajectory data
+void Rover::Log_Write_InterpolatedTrajectory()
+{
+    struct log_InterpolatedTrajectory pkt = {
+        LOG_PACKET_HEADER_INIT(LOG_INTERP_TRAJ_MSG),
+        time_us         : AP_HAL::micros64(),
+        interp_pos1     : prev_interpolated_pos[0],
+        interp_pos2     : prev_interpolated_pos[1],
+        interp_pos3     : prev_interpolated_pos[2],
+        interp_pos4     : prev_interpolated_pos[3],
+        interp_pos5     : prev_interpolated_pos[4],
+        interp_pos6     : prev_interpolated_pos[5],
+        interp_vel1     : interpolated_velocities[0],
+        interp_vel2     : interpolated_velocities[1],
+        interp_vel3     : interpolated_velocities[2],
+        interp_vel4     : interpolated_velocities[3],
+        interp_vel5     : interpolated_velocities[4],
+        interp_vel6     : interpolated_velocities[5]
+    };
+    logger.WriteBlock(&pkt, sizeof(pkt));
+}
+
 void Rover::Log_Write_Vehicle_Startup_Messages()
 {
     // only 200(?) bytes are guaranteed by AP_Logger
@@ -306,6 +414,53 @@ const LogStructure Rover::log_structure[] = {
     
     { LOG_GUIDEDTARGET_MSG, sizeof(log_GuidedTarget),
       "GUIP",  "QBffffff",    "TimeUS,Type,pX,pY,pZ,vX,vY,vZ", "s-mmmnnn", "F-000000" },
+
+// @LoggerMessage: ROB
+// @Description: Robot Arm Motor Data
+// @Field: TimeUS: Time since system startup
+// @Field: Motor1Pos: Motor 1 position
+// @Field: Motor1Vel: Motor 1 velocity
+// @Field: Motor1Curr: Motor 1 current
+// @Field: Motor2Pos: Motor 2 position
+// @Field: Motor2Vel: Motor 2 velocity
+// @Field: Motor2Curr: Motor 2 current
+// @Field: Motor3Pos: Motor 3 position
+// @Field: Motor3Vel: Motor 3 velocity
+// @Field: Motor3Curr: Motor 3 current
+// @Field: Motor4Pos: Motor 4 position
+// @Field: Motor4Vel: Motor 4 velocity
+// @Field: Motor4Curr: Motor 4 current
+// @Field: Motor5Pos: Motor 5 position
+// @Field: Motor5Vel: Motor 5 velocity
+// @Field: Motor5Curr: Motor 5 current
+// @Field: Motor6Pos: Motor 6 position
+// @Field: Motor6Vel: Motor 6 velocity
+// @Field: Motor6Curr: Motor 6 current
+
+    { LOG_ROBOT_ARM_MSG, sizeof(log_RobotArm1),
+      "ROB", "Qfffffffff", "TimeUS,M1Pos,M1Vel,M1Curr,M2Pos,M2Vel,M2Curr,M3Pos,M3Vel,M3Curr", "sddAddAddAdd", "F000000000" },
+
+    { LOG_ROBOT_ARM2_MSG, sizeof(log_RobotArm2),
+      "ROB2", "Qfffffffff", "TimeUS,M4Pos,M4Vel,M4Curr,M5Pos,M5Vel,M5Curr,M6Pos,M6Vel,M6Curr", "sddAddAddAdd", "F000000000" },
+
+// @LoggerMessage: ITRJ
+// @Description: Interpolated Trajectory Data
+// @Field: TimeUS: Time since system startup
+// @Field: IPos1: Interpolated position motor 1
+// @Field: IPos2: Interpolated position motor 2
+// @Field: IPos3: Interpolated position motor 3
+// @Field: IPos4: Interpolated position motor 4
+// @Field: IPos5: Interpolated position motor 5
+// @Field: IPos6: Interpolated position motor 6
+// @Field: IVel1: Interpolated velocity motor 1
+// @Field: IVel2: Interpolated velocity motor 2
+// @Field: IVel3: Interpolated velocity motor 3
+// @Field: IVel4: Interpolated velocity motor 4
+// @Field: IVel5: Interpolated velocity motor 5
+// @Field: IVel6: Interpolated velocity motor 6
+
+    { LOG_INTERP_TRAJ_MSG, sizeof(log_InterpolatedTrajectory),
+      "ITRJ", "Qffffffffffff", "TimeUS,IPos1,IPos2,IPos3,IPos4,IPos5,IPos6,IVel1,IVel2,IVel3,IVel4,IVel5,IVel6", "sddddddoooooo", "F0000000000000" },
 };
 
 void Rover::log_init(void)
@@ -324,6 +479,9 @@ void Rover::Log_Write_Sail() {}
 void Rover::Log_Write_Throttle() {}
 void Rover::Log_Write_RC(void) {}
 void Rover::Log_Write_Steering() {}
+void Rover::Log_Write_RobotArm1() {}
+void Rover::Log_Write_RobotArm2() {}
+void Rover::Log_Write_InterpolatedTrajectory() {}
 void Rover::Log_Write_Vehicle_Startup_Messages() {}
 
 #endif  // LOGGING_ENABLED
