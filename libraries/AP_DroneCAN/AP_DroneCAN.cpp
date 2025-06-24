@@ -2124,7 +2124,7 @@ void AP_DroneCAN::robot_can_tx_loop(void)
                 
                 //hal.scheduler->delay_microseconds(10);
             }
-            hal.scheduler->delay_microseconds(500);
+            hal.scheduler->delay_microseconds(200);
             // 2. Always send GET commands for current motor using motor_ids array
             AP_HAL::CANFrame GET_frame{};
             GET_frame.id = motor_ids[i];  // Use motor_ids to ensure correct ID
@@ -2133,13 +2133,13 @@ void AP_DroneCAN::robot_can_tx_loop(void)
             // GET_POSITION
             GET_frame.data[0] = 0x08;
             write_aux_frame(GET_frame, 10 * 1000); // GET_POSITION
-            hal.scheduler->delay_microseconds(500);
+            hal.scheduler->delay_microseconds(200);
             GET_frame.data[0] = 0x06;
             write_aux_frame(GET_frame, 10 * 1000); // GET_VELOCITY
-            hal.scheduler->delay_microseconds(500);
+            hal.scheduler->delay_microseconds(200);
             GET_frame.data[0] = 0x04;
             write_aux_frame(GET_frame, 10 * 1000); // GET_CURRENT
-            hal.scheduler->delay_microseconds(500);
+            hal.scheduler->delay_microseconds(200);
         }
         
         // if (!any_command_processed) {

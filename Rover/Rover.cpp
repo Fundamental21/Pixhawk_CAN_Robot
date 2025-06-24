@@ -203,14 +203,15 @@ void Rover::robot_arm_init()
 
 // Define predefined joint positions (example data - replace with actual positions)
 // This is a file-scope constant array, not a class member
-static const float predefined_joints[8][6] = {
+static const float predefined_joints[9][6] = {
     // Example joint positions - replace with your actual robot arm positions
-    {45.0f, 45.0f, 45.0f, 45.0f, 45.0f, 45.0f},
+    {-45.0f, -45.0f, -45.0f, -45.0f, -45.0f, -45.0f},
     {90.0f, 90.0f, 90.0f, 90.0f, 90.0f, 90.0f},
     {135.0f, 135.0f, 135.0f, 135.0f, 135.0f, 135.0f},
+    {45.0f, 45.0f, 45.0f, 45.0f, 45.0f, 45.0f},
     {180.0f, 180.0f, 180.0f, 180.0f, 180.0f, 180.0f},
     {135.0f, 135.0f, 135.0f, 135.0f, 135.0f, 135.0f},
-    {90.0f, 90.0f, 90.0f, 90.0f, 90.0f, 90.0f},
+    {-90.0f, -90.0f, -90.0f, -90.0f, -90.0f, -90.0f},
     {45.0f, 45.0f, 45.0f, 45.0f, 45.0f, 45.0f},
     {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}
 };
@@ -294,16 +295,62 @@ void Rover::robot_arm_control_loop()
         
         // 设置初始位置为当前电机位置
         float initial_pos[JOINT_DOF];
+        //bool valid_positions = false;
+        
+        // 检查当前电机位置是否有效
         for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
-            //MotorInstance* m = joint_motor_list[i];
-            //initial_pos[i] = m->last_position;
-            initial_pos[i] = 10.0f;
+            MotorInstance* m = joint_motor_list[i];
+            if (!isnan(m->last_position) && fabsf(m->last_position) <= 360.0f) {
+                //valid_positions = true;
+                break;
+            }
+        }
+        
+        // 重新获取所有电机的当前位置数据进行判断
+        float current_positions[JOINT_MOTOR_COUNT];
+        bool all_positions_valid = true;
+        
+        #ifdef ARDUPILOT_BUILD
+        hal.console->printf("Getting motor positions for interpolator initialization...\n");
+        #endif
+        
+        // 获取所有电机的当前位置
+        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
+            MotorInstance* m = joint_motor_list[i];
+            current_positions[i] = MIT_Motor::get_motor_position(m->can_id, m->motor_id);
+            
+            // 检查获取到的位置是否有效
+            if (isnan(current_positions[i]) || fabsf(current_positions[i]) > 360.0f) {
+                all_positions_valid = false;
+                #ifdef ARDUPILOT_BUILD
+                hal.console->printf("Motor %d position invalid: %.2f, waiting for valid data...\n", 
+                                   i+1, current_positions[i]);
+                #endif
+                break;
+            }
+        }
+        
+        // 如果任何一个电机位置无效，就不初始化插值器，等待下次循环
+        if (!all_positions_valid) {
+            return; // 退出，下次循环再尝试
+        }
+        
+        // 所有位置都有效，更新last_position并设置初始位置
+        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
+            MotorInstance* m = joint_motor_list[i];
+            m->last_position = current_positions[i];
+        }
+        
+        // 所有电机位置都有效，设置初始位置
+        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
+            initial_pos[i] = current_positions[i];
         }
         arm_interpolator.set_initial_position(initial_pos);
         
-        // 添加predefined_joints中的8行轨迹点到插值器队列
-        for (uint8_t point_idx = 0; point_idx < 8; point_idx++) {
-            bool is_final = (point_idx == 7); // 最后一个点设置为完全停止
+        // 添加predefined_joints中的所有轨迹点到插值器队列
+        const uint8_t num_trajectory_points = ARRAY_SIZE(predefined_joints);
+        for (uint8_t point_idx = 0; point_idx < num_trajectory_points; point_idx++) {
+            bool is_final = (point_idx == num_trajectory_points - 1); // 最后一个点设置为完全停止
             arm_interpolator.add_trajectory_point(predefined_joints[point_idx], is_final);
         }
         
@@ -312,42 +359,46 @@ void Rover::robot_arm_control_loop()
         interpolator_initialized = true;
     }
 
-    // 使用插值器生成平滑的轨迹点
-    float interpolated_pos[JOINT_DOF];
-    arm_interpolator.update(interpolated_pos);
-    
-    // 计算插值速度（当前位置 - 前一次位置）/ 时间间隔
-    static bool first_interpolation = true;
-    if (!first_interpolation) {
-        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
-            interpolated_velocities[i] = (interpolated_pos[i] - prev_interpolated_pos[i]) / 0.01f; // deg/s
-        }
-    } else {
-        // 第一次插值，速度设为0
-        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
-            interpolated_velocities[i] = 0.0f;
-        }
-        first_interpolation = false;
-    }
-    
-    // 保存当前位置供下次计算速度使用
-    for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
-        prev_interpolated_pos[i] = interpolated_pos[i];
-    }
-    
-    // 将插值结果发送给电机
-    for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
-        MotorInstance* m = joint_motor_list[i];
+    // 只有当插值器已初始化时，才进行插值和电机控制
+    if (interpolator_initialized) {
+        // 使用插值器生成平滑的轨迹点
+        float interpolated_pos[JOINT_DOF];
+        arm_interpolator.update(interpolated_pos);
         
-        // 更新目标位置
-        m->target_value = interpolated_pos[i];
+        // 计算插值速度（当前位置 - 前一次位置）/ 时间间隔
+        static bool first_interpolation = true;
+        if (!first_interpolation) {
+            for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
+                interpolated_velocities[i] = (interpolated_pos[i] - prev_interpolated_pos[i]) / 0.01f; // deg/s
+            }
+        } else {
+            // 第一次插值，速度设为0
+            for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
+                interpolated_velocities[i] = 0.0f;
+            }
+            first_interpolation = false;
+        }
         
-        // 发送控制指令
-        MIT_Motor::MotorControl_Handler(m);
-    }
+        // 保存当前位置供下次计算速度使用
+        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
+            prev_interpolated_pos[i] = interpolated_pos[i];
+        }
+        
+        // 将插值结果发送给电机
+        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
+            MotorInstance* m = joint_motor_list[i];
+            
+            // 更新目标位置
+            m->target_value = interpolated_pos[i];
+            
+            // 发送控制指令
+            MIT_Motor::MotorControl_Handler(m);
+        }
+        
+        // 轨迹执行完毕后保持最后位置
+        // 当队列为空时，机器人臂将保持在最后一个位置不动
+    } 
     
-    // 轨迹执行完毕后保持最后位置
-    // 当队列为空时，机器人臂将保持在最后一个位置不动
 }
 
 
