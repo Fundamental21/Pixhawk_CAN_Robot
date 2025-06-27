@@ -44,7 +44,7 @@ private:
     InterpolationState state_;
     
     // 轨迹队列
-    TrajectoryPoint trajectory_queue_[MAX_QUEUE_SIZE];
+    TrajectoryPoint trajectory_queue_[TRAJECTORY_QUEUE_SIZE];
     uint8_t queue_head_;    // 队列头索引
     uint8_t queue_tail_;    // 队列尾索引
     uint8_t queue_size_;    // 当前队列大小

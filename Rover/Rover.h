@@ -399,9 +399,12 @@ private:
     void Log_Write_RobotArm1();
     void Log_Write_RobotArm2();
     void Log_Write_InterpolatedTrajectory();
+    void Log_Write_MotorControlCommands();
     void Log_Write_Vehicle_Startup_Messages();
     void Log_Read(uint16_t log_num, uint16_t start_page, uint16_t end_page);
     void log_init(void);
+    void Log_Write_MotorControlCmd1();
+    void Log_Write_MotorControlCmd2();
 
     // mode.cpp
     Mode *mode_from_mode_num(enum Mode::Number num);

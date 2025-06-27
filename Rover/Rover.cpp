@@ -201,20 +201,17 @@ void Rover::robot_arm_init()
     arm_initialized = true;
 }
 
-// Define predefined joint positions (example data - replace with actual positions)
-// This is a file-scope constant array, not a class member
-static const float predefined_joints[9][6] = {
-    // Example joint positions - replace with your actual robot arm positions
-    {-45.0f, -45.0f, -45.0f, -45.0f, -45.0f, -45.0f},
-    {90.0f, 90.0f, 90.0f, 90.0f, 90.0f, 90.0f},
-    {135.0f, 135.0f, 135.0f, 135.0f, 135.0f, 135.0f},
-    {45.0f, 45.0f, 45.0f, 45.0f, 45.0f, 45.0f},
-    {180.0f, 180.0f, 180.0f, 180.0f, 180.0f, 180.0f},
-    {135.0f, 135.0f, 135.0f, 135.0f, 135.0f, 135.0f},
-    {-90.0f, -90.0f, -90.0f, -90.0f, -90.0f, -90.0f},
-    {45.0f, 45.0f, 45.0f, 45.0f, 45.0f, 45.0f},
-    {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}
-};
+// 定义CAN2轨迹数据接收相关的常量
+#define CAN2_TRAJECTORY_CMD_ID 0x100  // CAN2轨迹命令ID
+#define CAN2_TRAJECTORY_DATA_LENGTH 8 // 6个关节位置数据 + 2字节控制信息
+
+// 全局轨迹数据接收状态 (在头文件中声明，这里定义)
+CAN2TrajectoryData latest_trajectory_data;
+bool trajectory_data_received = false;
+uint32_t last_trajectory_receive_time = 0;
+
+// 全局轨迹数据队列
+TrajectoryDataQueue trajectory_queue;
 
 void Rover::robot_arm_control_loop()
 {
@@ -223,11 +220,10 @@ void Rover::robot_arm_control_loop()
         return;
     }
 
-    // Process CAN Rx messages and get motor status data
     // Initialize CAN Rx modules if not already done
     static bool rx_initialized = false;
     if (!rx_initialized) {
-        // 初始化接收队列和处理器 - 只处理接收相关的组件
+        // 初始化接收队列和处理器
         CAN_Robot_Rx_Queue::init();
         CAN_Robot_Rx_Process::init();
         rx_initialized = true;
@@ -254,24 +250,6 @@ void Rover::robot_arm_control_loop()
         }
     }
 
-#if HAL_LOGGING_ENABLED
-    // Log robot arm motor data at 5Hz
-    static uint32_t last_log_time_ms = 0;
-    uint32_t now_ms = AP_HAL::millis();
-    if (now_ms - last_log_time_ms >= 200) {  // Log every 200ms (5Hz)
-        Log_Write_RobotArm1();  // Motors 1-3
-        Log_Write_RobotArm2();  // Motors 4-6
-        last_log_time_ms = now_ms;
-    }
-    
-    // Log interpolated trajectory data at 10Hz
-    static uint32_t last_interp_log_time_ms = 0;
-    if (now_ms - last_interp_log_time_ms >= 100) {  // Log every 100ms (10Hz)
-        Log_Write_InterpolatedTrajectory();
-        last_interp_log_time_ms = now_ms;
-    }
-#endif
-
     // Initialize CAN Tx module if not already done
     static bool tx_initialized = false;
     if (!tx_initialized) {
@@ -295,16 +273,6 @@ void Rover::robot_arm_control_loop()
         
         // 设置初始位置为当前电机位置
         float initial_pos[JOINT_DOF];
-        //bool valid_positions = false;
-        
-        // 检查当前电机位置是否有效
-        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
-            MotorInstance* m = joint_motor_list[i];
-            if (!isnan(m->last_position) && fabsf(m->last_position) <= 360.0f) {
-                //valid_positions = true;
-                break;
-            }
-        }
         
         // 重新获取所有电机的当前位置数据进行判断
         float current_positions[JOINT_MOTOR_COUNT];
@@ -318,7 +286,7 @@ void Rover::robot_arm_control_loop()
         for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
             MotorInstance* m = joint_motor_list[i];
             current_positions[i] = MIT_Motor::get_motor_position(m->can_id, m->motor_id);
-            
+            // current_positions[i] = 0;
             // 检查获取到的位置是否有效
             if (isnan(current_positions[i]) || fabsf(current_positions[i]) > 360.0f) {
                 all_positions_valid = false;
@@ -347,20 +315,50 @@ void Rover::robot_arm_control_loop()
         }
         arm_interpolator.set_initial_position(initial_pos);
         
-        // 添加predefined_joints中的所有轨迹点到插值器队列
-        const uint8_t num_trajectory_points = ARRAY_SIZE(predefined_joints);
-        for (uint8_t point_idx = 0; point_idx < num_trajectory_points; point_idx++) {
-            bool is_final = (point_idx == num_trajectory_points - 1); // 最后一个点设置为完全停止
-            arm_interpolator.add_trajectory_point(predefined_joints[point_idx], is_final);
-        }
-        
-
-        
         interpolator_initialized = true;
+        
+        #ifdef ARDUPILOT_BUILD
+        hal.console->printf("Trajectory interpolator initialized, waiting for CAN2 trajectory data...\n");
+        #endif
     }
 
     // 只有当插值器已初始化时，才进行插值和电机控制
     if (interpolator_initialized) {
+        // 检查轨迹数据队列中是否有新的轨迹点需要添加到插值器队列
+        CAN2TrajectoryData trajectory_item;
+        uint8_t processed_count = 0;
+        const uint8_t max_process_per_cycle = 5;  // 每周期最多处理5个点，避免阻塞
+        
+        while (trajectory_queue.pop(trajectory_item) && processed_count < max_process_per_cycle) {
+            // 添加新的轨迹点到插值器队列
+            bool success = arm_interpolator.add_trajectory_point(
+                trajectory_item.joint_positions, 
+                trajectory_item.is_final_point
+            );
+            
+            if (success) {
+                #ifdef ARDUPILOT_BUILD
+                hal.console->printf("Added trajectory point to interpolator, queue size: %d\n", 
+                                   arm_interpolator.get_queue_size());
+                #endif
+                processed_count++;
+            } else {
+                #ifdef ARDUPILOT_BUILD
+                hal.console->printf("Failed to add trajectory point - interpolator queue full\n");
+                #endif
+                // 如果插值器队列满，将轨迹点放回队列头部（这里简化处理，直接丢弃）
+                break;
+            }
+        }
+        
+        // 如果处理了轨迹点，记录信息
+        if (processed_count > 0) {
+            #ifdef ARDUPILOT_BUILD
+            hal.console->printf("Processed %d trajectory points, remaining in queue: %d\n", 
+                               processed_count, trajectory_queue.size());
+            #endif
+        }
+        
         // 使用插值器生成平滑的轨迹点
         float interpolated_pos[JOINT_DOF];
         arm_interpolator.update(interpolated_pos);
@@ -399,6 +397,25 @@ void Rover::robot_arm_control_loop()
         // 当队列为空时，机器人臂将保持在最后一个位置不动
     } 
     
+    // 日志记录移到这里，确保记录的是实际发送给电机的控制指令
+#if HAL_LOGGING_ENABLED
+    // Log robot arm motor data at 5Hz
+    static uint32_t last_log_time_ms = 0;
+    uint32_t now_ms = AP_HAL::millis();
+    if (now_ms - last_log_time_ms >= 10) {  // Log every 200ms (5Hz)
+        Log_Write_RobotArm1();  // Motors 1-3
+        Log_Write_RobotArm2();  // Motors 4-6
+        last_log_time_ms = now_ms;
+    }
+    
+    // Log interpolated trajectory data at 5Hz
+    static uint32_t last_interp_log_time_ms = 0;
+    if (now_ms - last_interp_log_time_ms >= 10) {  // Log every 100ms (10Hz)
+        Log_Write_InterpolatedTrajectory();
+        last_interp_log_time_ms = now_ms;
+    }
+
+#endif
 }
 
 

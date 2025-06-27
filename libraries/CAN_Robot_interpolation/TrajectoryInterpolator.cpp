@@ -7,7 +7,7 @@ TrajectoryInterpolator::TrajectoryInterpolator() :
     queue_head_(0), queue_tail_(0), queue_size_(0)
 {
     // 清空轨迹队列
-    for (uint8_t i = 0; i < MAX_QUEUE_SIZE; i++) {
+    for (uint8_t i = 0; i < TRAJECTORY_QUEUE_SIZE; i++) {
         trajectory_queue_[i] = TrajectoryPoint();
     }
 }
@@ -46,7 +46,7 @@ void TrajectoryInterpolator::set_initial_position(const float initial_pos[JOINT_
 
 bool TrajectoryInterpolator::add_trajectory_point(const float target_pos[JOINT_DOF], bool need_stop)
 {
-    if (queue_size_ >= MAX_QUEUE_SIZE) {
+    if (queue_size_ >= TRAJECTORY_QUEUE_SIZE) {
         return false; // 队列已满
     }
     
@@ -57,7 +57,7 @@ bool TrajectoryInterpolator::add_trajectory_point(const float target_pos[JOINT_D
     point.need_stop = need_stop;
     
     // 更新队列索引
-    queue_tail_ = (queue_tail_ + 1) % MAX_QUEUE_SIZE;
+    queue_tail_ = (queue_tail_ + 1) % TRAJECTORY_QUEUE_SIZE;
     queue_size_++;
     
     return true;
@@ -65,7 +65,7 @@ bool TrajectoryInterpolator::add_trajectory_point(const float target_pos[JOINT_D
 
 bool TrajectoryInterpolator::add_trajectory_points(const float points[][JOINT_DOF], uint8_t count, bool last_point_stop)
 {
-    if (queue_size_ + count > MAX_QUEUE_SIZE) {
+    if (queue_size_ + count > TRAJECTORY_QUEUE_SIZE) {
         return false; // 队列空间不足
     }
     
@@ -86,7 +86,7 @@ void TrajectoryInterpolator::clear_queue()
     queue_tail_ = 0;
     queue_size_ = 0;
     
-    for (uint8_t i = 0; i < MAX_QUEUE_SIZE; i++) {
+    for (uint8_t i = 0; i < TRAJECTORY_QUEUE_SIZE; i++) {
         trajectory_queue_[i].is_valid = false;
     }
 }
@@ -265,7 +265,7 @@ bool TrajectoryInterpolator::get_next_trajectory_point(TrajectoryPoint& point)
     }
     
     point = trajectory_queue_[queue_head_];
-    queue_head_ = (queue_head_ + 1) % MAX_QUEUE_SIZE;
+    queue_head_ = (queue_head_ + 1) % TRAJECTORY_QUEUE_SIZE;
     queue_size_--;
     
     return point.is_valid;

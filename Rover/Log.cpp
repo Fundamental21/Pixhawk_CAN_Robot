@@ -2,6 +2,7 @@
 
 #include <AP_RangeFinder/AP_RangeFinder_Backend.h>
 
+
 #if HAL_LOGGING_ENABLED
 
 // Write an attitude packet
@@ -288,9 +289,40 @@ struct PACKED log_InterpolatedTrajectory {
     float interp_vel6;
 };
 
+// Motor Control Commands logging structure - 记录实际发送给电机的控制指令（1-3）
+struct PACKED log_MotorControlCmd1 {
+    LOG_PACKET_HEADER;
+    uint64_t time_us;
+    float cmd_pos1;
+    float cmd_pos2;
+    float cmd_pos3;
+    float feedback_pos1;
+    float feedback_pos2;
+    float feedback_pos3;
+};
+// Motor Control Commands logging structure - 记录实际发送给电机的控制指令（4-6）
+struct PACKED log_MotorControlCmd2 {
+    LOG_PACKET_HEADER;
+    uint64_t time_us;
+    float cmd_pos4;
+    float cmd_pos5;
+    float cmd_pos6;
+    float feedback_pos4;
+    float feedback_pos5;
+    float feedback_pos6;
+};
+
 // Write robot arm motor data - Motors 1-3
 void Rover::Log_Write_RobotArm1()
 {
+    // 添加调试输出
+    #ifdef ARDUPILOT_BUILD
+    hal.console->printf("ROB1: Pos[%.2f,%.2f,%.2f] Vel[%.2f,%.2f,%.2f] Curr[%.2f,%.2f,%.2f]\n",
+                       motor_positions[0], motor_positions[1], motor_positions[2],
+                       motor_velocities[0], motor_velocities[1], motor_velocities[2],
+                       motor_currents[0], motor_currents[1], motor_currents[2]);
+    #endif
+    
     struct log_RobotArm1 pkt = {
         LOG_PACKET_HEADER_INIT(LOG_ROBOT_ARM_MSG),
         time_us         : AP_HAL::micros64(),
@@ -310,6 +342,14 @@ void Rover::Log_Write_RobotArm1()
 // Write robot arm motor data - Motors 4-6
 void Rover::Log_Write_RobotArm2()
 {
+    // 添加调试输出
+    #ifdef ARDUPILOT_BUILD
+    hal.console->printf("ROB2: Pos[%.2f,%.2f,%.2f] Vel[%.2f,%.2f,%.2f] Curr[%.2f,%.2f,%.2f]\n",
+                       motor_positions[3], motor_positions[4], motor_positions[5],
+                       motor_velocities[3], motor_velocities[4], motor_velocities[5],
+                       motor_currents[3], motor_currents[4], motor_currents[5]);
+    #endif
+    
     struct log_RobotArm2 pkt = {
         LOG_PACKET_HEADER_INIT(LOG_ROBOT_ARM2_MSG),
         time_us         : AP_HAL::micros64(),
@@ -344,6 +384,39 @@ void Rover::Log_Write_InterpolatedTrajectory()
         interp_vel4     : interpolated_velocities[3],
         interp_vel5     : interpolated_velocities[4],
         interp_vel6     : interpolated_velocities[5]
+    };
+    logger.WriteBlock(&pkt, sizeof(pkt));
+}
+
+// Write motor control commands data - 1-3号电机
+void Rover::Log_Write_MotorControlCmd1()
+{
+    
+    struct log_MotorControlCmd1 pkt = {
+        LOG_PACKET_HEADER_INIT(LOG_MCMD1_MSG),
+        time_us         : AP_HAL::micros64(),
+        cmd_pos1        : prev_interpolated_pos[0],  // 使用插值位置作为命令位置
+        cmd_pos2        : prev_interpolated_pos[1],
+        cmd_pos3        : prev_interpolated_pos[2],
+        feedback_pos1   : motor_positions[0],
+        feedback_pos2   : motor_positions[1],
+        feedback_pos3   : motor_positions[2]
+    };
+    logger.WriteBlock(&pkt, sizeof(pkt));
+}
+// Write motor control commands data - 4-6号电机
+void Rover::Log_Write_MotorControlCmd2()
+{
+  
+    struct log_MotorControlCmd2 pkt = {
+        LOG_PACKET_HEADER_INIT(LOG_MCMD2_MSG),
+        time_us         : AP_HAL::micros64(),
+        cmd_pos4        : prev_interpolated_pos[3],  // 使用插值位置作为命令位置
+        cmd_pos5        : prev_interpolated_pos[4],
+        cmd_pos6        : prev_interpolated_pos[5],
+        feedback_pos4   : motor_positions[3],
+        feedback_pos5   : motor_positions[4],
+        feedback_pos6   : motor_positions[5]
     };
     logger.WriteBlock(&pkt, sizeof(pkt));
 }
@@ -461,6 +534,32 @@ const LogStructure Rover::log_structure[] = {
 
     { LOG_INTERP_TRAJ_MSG, sizeof(log_InterpolatedTrajectory),
       "ITRJ", "Qffffffffffff", "TimeUS,IPos1,IPos2,IPos3,IPos4,IPos5,IPos6,IVel1,IVel2,IVel3,IVel4,IVel5,IVel6", "sddddddoooooo", "F0000000000000" },
+
+// @LoggerMessage: MCMD1
+// @Description: Motor Control Commands - Motors 1-3
+// @Field: TimeUS: Time since system startup
+// @Field: CmdPos1: Commanded position motor 1
+// @Field: CmdPos2: Commanded position motor 2
+// @Field: CmdPos3: Commanded position motor 3
+// @Field: FbkPos1: Feedback position motor 1
+// @Field: FbkPos2: Feedback position motor 2
+// @Field: FbkPos3: Feedback position motor 3
+
+    { LOG_MCMD1_MSG, sizeof(log_MotorControlCmd1),
+      "MCMD1", "Qffffff", "TimeUS,CmdPos1,CmdPos2,CmdPos3,FbkPos1,FbkPos2,FbkPos3", "sdddddd", "F000000" },
+
+// @LoggerMessage: MCMD2
+// @Description: Motor Control Commands - Motors 4-6
+// @Field: TimeUS: Time since system startup
+// @Field: CmdPos4: Commanded position motor 4
+// @Field: CmdPos5: Commanded position motor 5
+// @Field: CmdPos6: Commanded position motor 6
+// @Field: FbkPos4: Feedback position motor 4
+// @Field: FbkPos5: Feedback position motor 5
+// @Field: FbkPos6: Feedback position motor 6
+
+    { LOG_MCMD2_MSG, sizeof(log_MotorControlCmd2),
+      "MCMD2", "Qffffff", "TimeUS,CmdPos4,CmdPos5,CmdPos6,FbkPos4,FbkPos5,FbkPos6", "sdddddd", "F000000" },
 };
 
 void Rover::log_init(void)

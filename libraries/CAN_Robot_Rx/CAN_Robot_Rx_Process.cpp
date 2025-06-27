@@ -13,6 +13,19 @@ void CAN_Robot_Rx_Process::init(void)
     }
 }
 
+// 多帧缓存结构体
+struct CAN2TrajectoryFrameCache {
+    int16_t joints[6];
+    bool received[3];
+    bool is_final;
+    uint64_t timestamp_us;
+    CAN2TrajectoryFrameCache() : is_final(false), timestamp_us(0) {
+        for (int i = 0; i < 6; i++) joints[i] = 0;
+        for (int i = 0; i < 3; i++) received[i] = false;
+    }
+};
+static CAN2TrajectoryFrameCache traj_cache[16]; // 最多缓存16个轨迹点
+
 CAN_Robot_Rx_Process::CAN_Robot_Rx_Process() :
     _mit_msg_count(0),
     _kegu_msg_count(0),
@@ -106,12 +119,79 @@ void CAN_Robot_Rx_Process::process_robot_command_message(const CAN_Robot_Rx_Queu
 {
     _cmd_msg_count++;
     
-    // 处理机器人指令消息
+    // 检查是否为CAN2轨迹命令 (CAN2, ID = 0x100)
+    if (msg.can_id == 1 && msg.motor_id == 0x100 && msg.dlc >= 8) {
+        // 处理CAN2轨迹数据
+        process_can2_trajectory_command(msg);
+        return;
+    }
+    
+    // 处理其他机器人指令消息
     // 这里可以根据具体的机器人通信协议来实现
     AP::logger().Write_MessageF("ROBOT_CMD: CAN%d ID:0x%X DLC:%d [%02X %02X %02X %02X]", 
                                (int)msg.can_id + 1, (unsigned)msg.motor_id, msg.dlc,
                                (unsigned)msg.data[0], (unsigned)msg.data[1], 
                                (unsigned)msg.data[2], (unsigned)msg.data[3]);
+}
+
+// 新增：处理CAN2轨迹命令
+void CAN_Robot_Rx_Process::process_can2_trajectory_command(const CAN_Robot_Rx_Queue::CANRxMessage &msg)
+{
+    if (msg.dlc < 8) return; // 数据长度不足
+
+    uint8_t point_id = msg.data[0] & 0x0F; // 支持0~15个轨迹点
+    uint8_t frame_id = msg.data[1] & 0x03; // 0,1,2
+
+    // 解析2个关节位置（int16小端）
+    int16_t joint_a = (int16_t)(msg.data[2] | (msg.data[3] << 8));
+    int16_t joint_b = (int16_t)(msg.data[4] | (msg.data[5] << 8));
+    bool is_final = false;
+    if (frame_id == 2) {
+        is_final = (msg.data[6] | (msg.data[7] << 8)) & 0x01;
+    }
+
+    // 写入缓存
+    traj_cache[point_id].joints[frame_id*2] = joint_a;
+    traj_cache[point_id].joints[frame_id*2+1] = joint_b;
+    traj_cache[point_id].received[frame_id] = true;
+    if (frame_id == 2) {
+        traj_cache[point_id].is_final = is_final;
+        traj_cache[point_id].timestamp_us = msg.timestamp_us;
+    }
+
+    // 如果3帧都收齐
+    if (traj_cache[point_id].received[0] && traj_cache[point_id].received[1] && traj_cache[point_id].received[2]) {
+        CAN2TrajectoryData trajectory_item;
+        for (int i = 0; i < 6; ++i) {
+            trajectory_item.joint_positions[i] = (float)traj_cache[point_id].joints[i];
+        }
+        trajectory_item.is_final_point = traj_cache[point_id].is_final;
+        trajectory_item.timestamp_us = traj_cache[point_id].timestamp_us;
+        if (trajectory_queue.push(trajectory_item)) {
+            AP::logger().Write_MessageF("CAN2_TRAJ: [%d,%d,%d,%d,%d,%d] Final:%d Queue:%d",
+                traj_cache[point_id].joints[0], traj_cache[point_id].joints[1],
+                traj_cache[point_id].joints[2], traj_cache[point_id].joints[3],
+                traj_cache[point_id].joints[4], traj_cache[point_id].joints[5],
+                traj_cache[point_id].is_final ? 1 : 0, trajectory_queue.size());
+            #ifdef ARDUPILOT_BUILD
+            extern const AP_HAL::HAL& hal;
+            hal.console->printf("CAN2 Trajectory: [%d, %d, %d, %d, %d, %d] Final:%d Queue:%d\n",
+                traj_cache[point_id].joints[0], traj_cache[point_id].joints[1],
+                traj_cache[point_id].joints[2], traj_cache[point_id].joints[3],
+                traj_cache[point_id].joints[4], traj_cache[point_id].joints[5],
+                traj_cache[point_id].is_final ? 1 : 0, trajectory_queue.size());
+            #endif
+        } else {
+            AP::logger().Write_MessageF("CAN2_TRAJ_WARNING: Queue full, dropping trajectory point");
+            #ifdef ARDUPILOT_BUILD
+            extern const AP_HAL::HAL& hal;
+            hal.console->printf("CAN2 Trajectory WARNING: Queue full, dropping trajectory point\n");
+            #endif
+        }
+        // 清空缓存
+        for (int i = 0; i < 3; i++) traj_cache[point_id].received[i] = false;
+    }
+    last_trajectory_receive_time = AP_HAL::millis();
 }
 
 bool CAN_Robot_Rx_Process::is_mit_motor_id(uint32_t motor_id) const
@@ -242,4 +322,29 @@ void CAN_Robot_Rx_Process::log_motor_status(void)
             }
         }
     }
+}
+
+// 实现轨迹数据队列方法
+bool TrajectoryDataQueue::push(const CAN2TrajectoryData& item)
+{
+    if (is_full()) {
+        return false;  // 队列已满
+    }
+    
+    data[tail] = item;
+    tail = (tail + 1) % MAX_QUEUE_SIZE;
+    count++;
+    return true;
+}
+
+bool TrajectoryDataQueue::pop(CAN2TrajectoryData& item)
+{
+    if (is_empty()) {
+        return false;  // 队列为空
+    }
+    
+    item = data[head];
+    head = (head + 1) % MAX_QUEUE_SIZE;
+    count--;
+    return true;
 } 

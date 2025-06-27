@@ -26,6 +26,9 @@ enum LoggingParameters {
     LOG_ROBOT_ARM_MSG,
     LOG_ROBOT_ARM2_MSG,
     LOG_INTERP_TRAJ_MSG,
+    LOG_MCMD_MSG,
+    LOG_MCMD1_MSG,
+    LOG_MCMD2_MSG,
 };
 
 #define MASK_LOG_ATTITUDE_FAST  (1<<0)

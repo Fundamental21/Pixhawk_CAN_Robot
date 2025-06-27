@@ -5,7 +5,7 @@
 
 // 插值配置常量
 #define JOINT_DOF 6                    // 关节自由度数
-#define MAX_QUEUE_SIZE 100             // 最大队列长度（100行，每行6个点）
+#define TRAJECTORY_QUEUE_SIZE 100      // 最大队列长度（100行，每行6个点）
 #define MAX_FILTER_SIZE 20             // 最大滤波器窗口大小
 
 // 插值参数结构体
