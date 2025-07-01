@@ -397,8 +397,8 @@ void AP_BattMonitor_DroneCAN::mppt_set_powered_state(bool power_on)
 
     _mppt.powered_state = power_on;
 
-    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Battery %u: powering %s%s", (unsigned)_instance+1, _mppt.powered_state ? "ON" : "OFF",
-        (_mppt.powered_state_remote_ms == 0) ? "" : " Retry");
+    //GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Battery %u: powering %s%s", (unsigned)_instance+1, _mppt.powered_state ? "ON" : "OFF",
+    //      (_mppt.powered_state_remote_ms == 0) ? "" : " Retry");
 
     mppt_OutputEnableRequest request;
     request.enable = _mppt.powered_state;
@@ -434,7 +434,7 @@ void AP_BattMonitor_DroneCAN::mppt_report_faults(const uint8_t instance, const u
 {
     // handle recovery
     if (fault_flags == 0) {
-        GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Battery %u: OK", (unsigned)instance+1);
+        //GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Battery %u: OK", (unsigned)instance+1);
         return;
     }
 
@@ -443,7 +443,7 @@ void AP_BattMonitor_DroneCAN::mppt_report_faults(const uint8_t instance, const u
         // this loop is to generate multiple messages if there are multiple concurrent faults, but also run once if there are no faults
         if ((fault_bit & fault_flags) != 0) {
             const MPPT_FaultFlags err = (MPPT_FaultFlags)fault_bit;
-            GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Battery %u: %s", (unsigned)instance+1, mppt_fault_string(err));
+            //GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Battery %u: %s", (unsigned)instance+1, mppt_fault_string(err));
         }
     }
 }

@@ -1,6 +1,7 @@
 #include "CAN_Robot_Rx_Process.h"
 #include <new>
 #include <cstring>  // for memcpy
+#include <GCS_MAVLink/GCS.h>
 
 // 单例实例
 CAN_Robot_Rx_Process* CAN_Robot_Rx_Process::_singleton = nullptr;
@@ -99,20 +100,34 @@ void CAN_Robot_Rx_Process::process_kegu_motor_message(const CAN_Robot_Rx_Queue::
 {
     if (msg.can_id > 1) return; // 只支持CAN1和CAN2
     
-    uint8_t motor_id = extract_motor_id(msg.motor_id);
-    if (motor_id >= MAX_MOTORS_PER_CAN) return;
+    uint8_t motor_index = extract_motor_id(msg.motor_id);  // 这现在是数组索引
+    if (motor_index >= MAX_MOTORS_PER_CAN) {
+        GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "KEGU Motor Index Out of Range: CAN_ID=0x%lX index=%d max=%d", 
+                     (unsigned long)msg.motor_id, motor_index, MAX_MOTORS_PER_CAN);
+        return;
+    }
     
-    uint8_t can_channel = msg.can_id; // CAN1=0, CAN2=1
-    KEGU_Motor_Feedback &feedback = _kegu_motors[can_channel][motor_id];
+    // uint8_t can_channel = msg.can_id; // CAN1=0, CAN2=1
+    KEGU_Motor_Feedback &feedback = _kegu_motors[0][6];
+    
+    // 添加调试信息：显示接收到的原始消息
+    uint8_t actual_motor_id = (msg.motor_id == 0x07) ? 7 : (motor_index + 1);
+    GCS_SEND_TEXT(MAV_SEVERITY_DEBUG, "KEGU_MSG_RX: CAN%d CAN_ID=0x%lX Motor_ID=%d index=%d DLC=%d", 
+                 (int)msg.can_id + 1, (unsigned long)msg.motor_id, actual_motor_id, motor_index, msg.dlc);
+    
     decode_kegu_feedback(msg, feedback);
     feedback.last_update_us = msg.timestamp_us;
     
     _kegu_msg_count++;
     
-    // 记录详细日志
-    AP::logger().Write_MessageF("KEGU_RX: CAN%d ID:0x%X M%d Spd:%.1f Curr:%.1f Pos:%d", 
-                               (int)msg.can_id + 1, (unsigned)msg.motor_id, motor_id,
-                               feedback.speed, feedback.current, feedback.position);
+    // 记录详细日志（明确显示CAN ID和电机ID的区别）
+    AP::logger().Write_MessageF("KEGU_RX: CAN%d CAN_ID:0x%X Motor_ID:%d(idx%d) Spd:%.1f Curr:%.1f Pos:%d", 
+                               (int)msg.can_id + 1, (unsigned)msg.motor_id, actual_motor_id, motor_index,
+                               feedback.speed, feedback.current, (int)feedback.position);
+    GCS_SEND_TEXT(MAV_SEVERITY_DEBUG, "KEGU_RX: CAN%d CAN_ID:0x%X Motor_ID:%d(idx%d) Spd:%.1f Curr:%.1f Pos:%d", 
+                               (int)msg.can_id + 1, (unsigned)msg.motor_id, actual_motor_id, motor_index,
+                               feedback.speed, feedback.current, (int)feedback.position);
+
 }
 
 void CAN_Robot_Rx_Process::process_robot_command_message(const CAN_Robot_Rx_Queue::CANRxMessage &msg)
@@ -123,6 +138,13 @@ void CAN_Robot_Rx_Process::process_robot_command_message(const CAN_Robot_Rx_Queu
     if (msg.can_id == 1 && msg.motor_id == 0x100 && msg.dlc >= 8) {
         // 处理CAN2轨迹数据
         process_can2_trajectory_command(msg);
+        return;
+    }
+    
+    // 检查是否为KEGU电机控制命令 (CAN2, ID = 0x150)
+    if (msg.can_id == 1 && msg.motor_id == 0x150 && msg.dlc >= 1) {
+        // 处理KEGU电机控制命令
+        process_kegu_control_command(msg);
         return;
     }
     
@@ -194,6 +216,34 @@ void CAN_Robot_Rx_Process::process_can2_trajectory_command(const CAN_Robot_Rx_Qu
     last_trajectory_receive_time = AP_HAL::millis();
 }
 
+// 新增：处理KEGU电机控制命令
+void CAN_Robot_Rx_Process::process_kegu_control_command(const CAN_Robot_Rx_Queue::CANRxMessage &msg)
+{
+    if (msg.dlc < 1) return; // 数据长度不足
+    
+    uint8_t command = msg.data[0];
+    
+    // 记录接收到的命令
+    AP::logger().Write_MessageF("KEGU_CMD: CAN%d ID:0x%X CMD:0x%02X DLC:%d", 
+                               (int)msg.can_id + 1, (unsigned)msg.motor_id, command, msg.dlc);
+    
+    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "KEGU Command received: 0x%02X", command);
+    
+    // 设置全局标志，让robot_arm_control_loop处理
+    extern uint8_t kegu_external_command;
+    extern bool kegu_external_command_received;
+    extern uint32_t kegu_command_timestamp;
+    
+    kegu_external_command = command;
+    kegu_external_command_received = true;
+    kegu_command_timestamp = AP_HAL::millis();
+    
+    #ifdef ARDUPILOT_BUILD
+    extern const AP_HAL::HAL& hal;
+    hal.console->printf("KEGU Control Command: 0x%02X received\n", command);
+    #endif
+}
+
 bool CAN_Robot_Rx_Process::is_mit_motor_id(uint32_t motor_id) const
 {
     // MIT电机使用Motor ID 0x01-0x06 (1-6)
@@ -204,14 +254,35 @@ bool CAN_Robot_Rx_Process::is_kegu_motor_id(uint32_t motor_id) const
 {
     // KEGU电机使用特定的ID模式
     uint16_t high_part = (motor_id >> 8) & 0xFF;
-    return (high_part == 0x02 || high_part == 0x03); // 反馈消息类型
+    // 夹爪电机ID=7也是KEGU类型，用于自动上报数据
+    return (high_part == 0x02 || high_part == 0x03 || motor_id == 0x07);
 }
 
 uint8_t CAN_Robot_Rx_Process::extract_motor_id(uint32_t motor_id) const
 {
-    // 对于MIT电机，motor_id就是电机ID
-    // 对于KEGU电机，ID在低字节
-    return motor_id & 0xFF;
+    if (is_kegu_motor_id(motor_id)) {
+        // KEGU电机：从CAN ID中提取电机ID
+        uint16_t high_part = (motor_id >> 8) & 0xFF;
+        if (high_part == 0x02 || high_part == 0x03) {
+            uint8_t extracted_id = motor_id & 0xFF;  // CAN ID格式：0x2XY或0x3XY，电机ID在低字节
+            
+            // 验证提取的ID是否在有效范围内（1-7为有效电机ID）
+            if (extracted_id >= 1 && extracted_id <= 7) {
+                return extracted_id - 1;  // 转换为0-based数组索引（0-6）
+            } else {
+                // 无效的电机ID，记录错误并返回默认值
+                GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "KEGU Invalid Motor ID: 0x%lX extracted_id=%d", 
+                             (unsigned long)motor_id, extracted_id);
+                return 0;  // 返回默认索引0
+            }
+        } else if (motor_id == 0x07) {
+            // 特殊情况：电机ID=7映射到数组索引6
+            return 6;  // 0-based索引：电机ID7 -> 索引6
+        }
+    }
+    // MIT电机：motor_id就是电机ID，需要转换为0-based索引
+    uint8_t extracted_id = motor_id & 0xFF;
+    return (extracted_id > 0) ? (extracted_id - 1) : 0;
 }
 
 void CAN_Robot_Rx_Process::decode_mit_feedback(const CAN_Robot_Rx_Queue::CANRxMessage &msg, MIT_Motor_Feedback &feedback)
@@ -232,7 +303,7 @@ void CAN_Robot_Rx_Process::decode_mit_feedback(const CAN_Robot_Rx_Queue::CANRxMe
             feedback.position = raw_value * 360.0f / 262144.0f; // 0.01 度分辨率
             break;
         case 0x04: // 电流反馈
-            feedback.current = raw_value * 1.0f / 1000.0f; // mA 分辨率转换为 A
+            feedback.current = raw_value * 1.0f; // mA 分辨率，直接使用mA单位
             break;
         case 0x32: // 温度反馈
             feedback.temperature = static_cast<float>(raw_value);
@@ -246,28 +317,34 @@ void CAN_Robot_Rx_Process::decode_mit_feedback(const CAN_Robot_Rx_Queue::CANRxMe
 
 void CAN_Robot_Rx_Process::decode_kegu_feedback(const CAN_Robot_Rx_Queue::CANRxMessage &msg, KEGU_Motor_Feedback &feedback)
 {
-    uint16_t msg_type = (msg.can_id >> 8) & 0xFF;
+    // 使用实际CAN ID而不是CAN总线ID来判断消息类型
+    uint16_t msg_type = (msg.motor_id >> 8) & 0xFF;
+    GCS_SEND_TEXT(MAV_SEVERITY_DEBUG, "KEGU CAN_ID: 0x%lX, msg_type: 0x%02X", (unsigned long)msg.motor_id, msg_type);
     
     if (msg_type == 0x02 && msg.dlc >= 6) {
-        // 速度和电流反馈
+        // 0x280+电机ID: 速度和电流反馈 (6字节)
+        // byte0-3: 当前速度(RPM), byte4-5: 当前电流(10mA单位)
         int32_t speed_raw;
         memcpy(&speed_raw, msg.data, sizeof(int32_t));
-        feedback.speed = speed_raw;
+        feedback.speed = speed_raw; // 直接使用RPM值
         
         int16_t current_raw;
         memcpy(&current_raw, msg.data + 4, sizeof(int16_t));
-        feedback.current = current_raw * 10.0f; // 缩放电流
+        feedback.current = current_raw * 10.0f; // 10mA单位转换为mA单位 (10mA * 10 = mA)
+        
+        // 记录详细的电流解码信息
+        AP::logger().Write_MessageF("KEGU_CURRENTrx: CAN_ID:0x%X Raw:%d(10mA) Decoded:%.1f(mA)", 
+                                   (unsigned)msg.motor_id, current_raw, feedback.current);
+                // 同时使用GCS发送文本消息
+        GCS_SEND_TEXT(MAV_SEVERITY_DEBUG, "KEGU Currentrx: %.2fmA", feedback.current);
     } else if (msg_type == 0x03 && msg.dlc >= 4) {
-        // 位置反馈
+        // 0x380+电机ID: 位置反馈 (4字节)
+        // byte0-3: 当前位置
         int32_t position_raw;
         memcpy(&position_raw, msg.data, sizeof(int32_t));
-        feedback.position = position_raw;
+        feedback.position = position_raw; // 直接使用原始位置值,脉冲数
     }
     
-    // 从DLC或数据中提取状态
-    if (msg.dlc > 6) {
-        feedback.status = msg.data[6];
-    }
 }
 
 const CAN_Robot_Rx_Process::MIT_Motor_Feedback& CAN_Robot_Rx_Process::get_mit_motor_status(uint8_t can_channel, uint8_t motor_id) const

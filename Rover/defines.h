@@ -29,6 +29,7 @@ enum LoggingParameters {
     LOG_MCMD_MSG,
     LOG_MCMD1_MSG,
     LOG_MCMD2_MSG,
+    LOG_GRIPPER_MSG,
 };
 
 #define MASK_LOG_ATTITUDE_FAST  (1<<0)

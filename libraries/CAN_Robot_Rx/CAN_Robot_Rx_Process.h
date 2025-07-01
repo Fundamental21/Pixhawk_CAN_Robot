@@ -60,12 +60,13 @@ public:
     void process_kegu_motor_message(const CAN_Robot_Rx_Queue::CANRxMessage &msg);
     void process_robot_command_message(const CAN_Robot_Rx_Queue::CANRxMessage &msg);
     void process_can2_trajectory_command(const CAN_Robot_Rx_Queue::CANRxMessage &msg);
+    void process_kegu_control_command(const CAN_Robot_Rx_Queue::CANRxMessage &msg);
     
     // MIT电机状态结构
     struct MIT_Motor_Feedback {
         float position;     // 位置 (度)
         float velocity;     // 速度 (RPM)
-        float current;      // 电流 (A)
+        float current;      // 电流 (mA)
         float temperature;  // 温度 (°C)
         uint8_t error_code; // 错误代码
         uint64_t last_update_us; // 最后更新时间

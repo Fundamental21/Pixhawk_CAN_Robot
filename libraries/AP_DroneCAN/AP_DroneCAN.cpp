@@ -2087,7 +2087,7 @@ void AP_DroneCAN::robot_can_tx_loop(void)
 
         // bool any_command_processed = false;
         
-        // Process all 6 motors in one loop: set position + get status
+        // Process all 6 joint motors in one loop: set position + get status
         for (uint8_t i = 0; i < 6; i++) {
             // 1. Try to get and send position command for this motor
             CAN_Robot_Tx_Queue::MotorCommand cmd;
@@ -2139,6 +2139,39 @@ void AP_DroneCAN::robot_can_tx_loop(void)
             hal.scheduler->delay_microseconds(200);
             GET_frame.data[0] = 0x04;
             write_aux_frame(GET_frame, 10 * 1000); // GET_CURRENT
+            hal.scheduler->delay_microseconds(200);
+        }
+        
+        // Process gripper motor (ID=7) commands - no GET requests needed as it auto-reports
+        CAN_Robot_Tx_Queue::MotorCommand gripper_cmd;
+        if (queue->get_next_command(gripper_cmd) && gripper_cmd.motor_id == 7) {
+            // Create CAN frame for gripper control (current or velocity)
+            AP_HAL::CANFrame gripper_frame = CAN_Robot_Tx_Process::create_motor_frame(
+                gripper_cmd.can_id, 
+                gripper_cmd.motor_id, 
+                gripper_cmd.motor_type, 
+                gripper_cmd.mode, 
+                gripper_cmd.target_value
+            );
+            
+            // Send gripper command
+            if (gripper_frame.dlc > 0) {
+                if (write_aux_frame(gripper_frame, 10 * 1000)) {
+                    queue->mark_command_processed();
+                    debug_dronecan(AP_CANManager::LOG_DEBUG, 
+                                 "Gripper Motor: ID=0x%X Mode=%u Value=%.2f", 
+                                 (unsigned)gripper_cmd.motor_id, (unsigned)gripper_cmd.mode, (double)gripper_cmd.target_value);
+                } else {
+                    debug_dronecan(AP_CANManager::LOG_ERROR, 
+                                 "Gripper Motor failed: ID=0x%X", 
+                                 (unsigned)gripper_cmd.motor_id);
+                }
+            } else {
+                queue->mark_command_processed();
+                debug_dronecan(AP_CANManager::LOG_ERROR, 
+                             "Gripper Invalid frame: Type=%u Mode=%u", 
+                             (unsigned)gripper_cmd.motor_type, (unsigned)gripper_cmd.mode);
+            }
             hal.scheduler->delay_microseconds(200);
         }
         

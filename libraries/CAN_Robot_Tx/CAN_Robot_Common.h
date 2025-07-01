@@ -11,13 +11,16 @@
 #define MIT_CMD_CURRENT      0x1C
 #define MIT_CMD_SET_ID       0x1B
 
-// KEGU motor command types
-#define KEGU_CMD_INIT        0x01
-#define KEGU_CMD_ENABLE_CUR  0x02
-#define KEGU_CMD_SET_CUR     0x03
-#define KEGU_CMD_ENABLE_POS  0x03
-#define KEGU_CMD_CURRENT     0x04
-#define KEGU_CMD_POSITION    0x05
+// KEGU motor command types - 根据实际协议更新
+#define KEGU_CMD_INIT        0x01  // 总线启动指令
+#define KEGU_CMD_ENABLE_CUR  0x02  // 使能电流模式
+#define KEGU_CMD_ENABLE_VEL  0x03  // 使能速度模式 
+#define KEGU_CMD_SET_CUR     0x04  // 设置电流值
+#define KEGU_CMD_SET_VEL     0x05  // 设置速度值
+// 兼容别名
+#define KEGU_CMD_ENABLE_POS  0x03  // 兼容旧名称
+#define KEGU_CMD_CURRENT     0x04  // 兼容别名
+#define KEGU_CMD_POSITION    0x05  // 兼容别名
 
 // CAN channels
 enum class CanChannel : uint8_t {
@@ -59,7 +62,7 @@ enum class MotorControlMode : uint8_t {
     CURRENT = 2,
     INIT = 3,
     ENABLE_CUR = 4,
-    ENABLE_POS = 5,
+    ENABLE_VEL = 5,
     MAX = 6
 };
 
@@ -71,7 +74,8 @@ enum class MotorControlMode : uint8_t {
 #define CTRL_MODE_CURRENT  MotorControlMode::CURRENT
 #define CTRL_MODE_INIT     MotorControlMode::INIT
 #define CTRL_MODE_ENABLE_CUR MotorControlMode::ENABLE_CUR
-#define CTRL_MODE_ENABLE_POS MotorControlMode::ENABLE_POS
+#define CTRL_MODE_ENABLE_VEL MotorControlMode::ENABLE_VEL
+#define CTRL_MODE_ENABLE_POS MotorControlMode::ENABLE_POS  // 兼容别名
 
 // Legacy MotorCtrlMode for backward compatibility
 using MotorCtrlMode = MotorControlMode;

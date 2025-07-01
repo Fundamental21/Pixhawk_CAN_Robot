@@ -23,6 +23,7 @@
 #ifdef ARDUPILOT_BUILD
 #include <AP_HAL/AP_HAL.h>
 #include <AP_Math/AP_Math.h>
+#include <GCS_MAVLink/GCS.h>
 extern const AP_HAL::HAL& hal;
 #endif
 
@@ -173,29 +174,33 @@ float get_motor_position(uint8_t can_id, uint8_t motor_id)
     // Only process CAN1 messages (channel 0 is CAN1 for motor)
     uint8_t can_channel = 0;  // CAN1
     
-    // Get MIT motor status from CAN1
-    const CAN_Robot_Rx_Process::MIT_Motor_Feedback& motor_feedback = 
-        rx_processor->get_mit_motor_status(can_channel, motor_id);
-    
-    // Check if we have valid data
-    if (motor_feedback.last_update_us > 0) {
-        return motor_feedback.position;  // Return position in degrees
+    // Check if this is a KEGU motor (motor_id = 7 is KEGU gripper)
+    if (motor_id == 7) {
+        // KEGU gripper motor uses array index 6 (0-based)
+        uint8_t motor_array_index = 6;
+        const CAN_Robot_Rx_Process::KEGU_Motor_Feedback& kegu_feedback = 
+            rx_processor->get_kegu_motor_status(can_channel, motor_array_index);
+        
+        if (kegu_feedback.last_update_us > 0) {
+            const float pulses_per_degree = 100.0f;  // Conversion factor for KEGU motors
+            return kegu_feedback.position / pulses_per_degree;  // Convert pulses to degrees
+        }
+    } else if (motor_id >= 1 && motor_id <= 6) {
+        // MIT motor handling (motor_id 1-6 maps to array index 0-5)
+        uint8_t motor_array_index = motor_id - 1;
+        const CAN_Robot_Rx_Process::MIT_Motor_Feedback& motor_feedback = 
+            rx_processor->get_mit_motor_status(can_channel, motor_array_index);
+        
+        // Check if we have valid data
+        if (motor_feedback.last_update_us > 0) {
+            return motor_feedback.position;  // Return position in degrees
+        }
     }
-    
-    /* KEGU Motor interface (reserved for future use)
-    const CAN_Robot_Rx_Process::KEGU_Motor_Feedback& kegu_feedback = 
-        rx_processor->get_kegu_motor_status(can_channel, motor_id);
-    
-    if (kegu_feedback.last_update_us > 0) {
-        const float pulses_per_degree = 100.0f;
-        return kegu_feedback.position / pulses_per_degree;
-    }
-    */
     
     return NAN;  // Return NAN to indicate no valid data
 }
 
-// Motor current getter function - gets MIT motor current from CAN1 Rx queue
+// Motor current getter function - gets motor current from CAN1 Rx queue (supports both MIT and KEGU)
 float get_motor_current(uint8_t can_id, uint8_t motor_id)
 {
     // Get the CAN Rx processor singleton
@@ -207,28 +212,32 @@ float get_motor_current(uint8_t can_id, uint8_t motor_id)
     // Only process CAN1 messages (channel 0 is CAN1 for motor)
     uint8_t can_channel = 0;  // CAN1
     
-    // Get MIT motor status from CAN1
-    const CAN_Robot_Rx_Process::MIT_Motor_Feedback& motor_feedback = 
-        rx_processor->get_mit_motor_status(can_channel, motor_id);
-    
-    // Check if we have valid data
-    if (motor_feedback.last_update_us > 0) {
-        return motor_feedback.current;  // Return current in Amps
+    // Check if this is a KEGU motor (motor_id = 7 is KEGU gripper)
+    if (motor_id == 7) {
+        // KEGU gripper motor uses array index 6 (0-based)
+        uint8_t motor_array_index = 6;
+        const CAN_Robot_Rx_Process::KEGU_Motor_Feedback& kegu_feedback = 
+            rx_processor->get_kegu_motor_status(can_channel, motor_array_index);
+        
+        if (kegu_feedback.last_update_us > 0) {
+            return kegu_feedback.current;  // Return current in mA
+        }
+    } else if (motor_id >= 1 && motor_id <= 6) {
+        // MIT motor handling (motor_id 1-6 maps to array index 0-5)
+        uint8_t motor_array_index = motor_id - 1;
+        const CAN_Robot_Rx_Process::MIT_Motor_Feedback& motor_feedback = 
+            rx_processor->get_mit_motor_status(can_channel, motor_array_index);
+        
+        // Check if we have valid data
+        if (motor_feedback.last_update_us > 0) {
+            return motor_feedback.current;  // Return current in mA
+        }
     }
-    
-    /* KEGU Motor interface (reserved for future use)
-    const CAN_Robot_Rx_Process::KEGU_Motor_Feedback& kegu_feedback = 
-        rx_processor->get_kegu_motor_status(can_channel, motor_id);
-    
-    if (kegu_feedback.last_update_us > 0) {
-        return kegu_feedback.current;
-    }
-    */
     
     return NAN;  // Return NAN to indicate no valid data
 }
 
-// Motor velocity getter function - gets MIT motor velocity from CAN1 Rx queue
+// Motor velocity getter function - gets motor velocity from CAN1 Rx queue (supports both MIT and KEGU)
 float get_motor_velocity(uint8_t can_id, uint8_t motor_id)
 {
     // Get the CAN Rx processor singleton
@@ -240,33 +249,196 @@ float get_motor_velocity(uint8_t can_id, uint8_t motor_id)
     // Only process CAN1 messages (channel 0 is CAN1 for motor)
     uint8_t can_channel = 0;  // CAN1
     
-    // Get MIT motor status from CAN1
-    const CAN_Robot_Rx_Process::MIT_Motor_Feedback& motor_feedback = 
-        rx_processor->get_mit_motor_status(can_channel, motor_id);
-    
-    // Check if we have valid data
-    if (motor_feedback.last_update_us > 0) {
-        return motor_feedback.velocity;  // Return velocity in degrees/sec
+    // Check if this is a KEGU motor (motor_id = 7 is KEGU gripper)
+    if (motor_id == 7) {
+        // KEGU gripper motor uses array index 6 (0-based)
+        uint8_t motor_array_index = 6;
+        const CAN_Robot_Rx_Process::KEGU_Motor_Feedback& kegu_feedback = 
+            rx_processor->get_kegu_motor_status(can_channel, motor_array_index);
+        
+        if (kegu_feedback.last_update_us > 0) {
+            return kegu_feedback.speed;  // KEGU uses 'speed' field (RPM)
+        }
+    } else if (motor_id >= 1 && motor_id <= 6) {
+        // MIT motor handling (motor_id 1-6 maps to array index 0-5)
+        uint8_t motor_array_index = motor_id - 1;
+        const CAN_Robot_Rx_Process::MIT_Motor_Feedback& motor_feedback = 
+            rx_processor->get_mit_motor_status(can_channel, motor_array_index);
+        
+        // Check if we have valid data
+        if (motor_feedback.last_update_us > 0) {
+            return motor_feedback.velocity;  // Return velocity in degrees/sec
+        }
     }
-    
-    /* KEGU Motor interface (reserved for future use)
-    const CAN_Robot_Rx_Process::KEGU_Motor_Feedback& kegu_feedback = 
-        rx_processor->get_kegu_motor_status(can_channel, motor_id);
-    
-    if (kegu_feedback.last_update_us > 0) {
-        return kegu_feedback.velocity;
-    }
-    */
     
     return NAN;  // Return NAN to indicate no valid data
 }
 
+//---------------------Gripper Motor Control Functions---------------------
+// Set gripper motor current control value (positive = close, negative = open)
+// current_value: 输入毫安(mA)
+void set_gripper_current(float current_value)
+{
+    // Access global motor_instances array (defined outside namespace)
+    MotorInstance* gripper_motor = &::motor_instances[0][6];  // Motor ID 7
+    
+    if (!gripper_motor->enabled) {
+        return;
+    }
+    
+    // 限制电流值在合理范围内 (mA单位)
+    if (current_value > 500.0f) current_value = 500.0f;    // 最大500mA (0.5A)
+    if (current_value < -500.0f) current_value = -500.0f;  // 最大500mA (0.5A)
+    
+    // KEGU电机需要先使能电流控制模式
+    if (gripper_motor->first_command) {
+        gripper_motor->mode = CTRL_MODE_ENABLE_CUR;
+        gripper_motor->target_value = 0.0f;
+        MotorControl_Handler(gripper_motor);
+        gripper_motor->first_command = false;
+        
+        #ifdef ARDUPILOT_BUILD
+        hal.scheduler->delay_microseconds(1000);  // 短暂延迟确保使能成功
+        #endif
+    }
+    
+    gripper_motor->mode = CTRL_MODE_CURRENT;
+    gripper_motor->target_value = current_value;
+    
+    // 使用现有的电机控制处理函数
+    MotorControl_Handler(gripper_motor);
+    
+#ifdef ARDUPILOT_BUILD
+    hal.console->printf("Gripper Current Set: %.1f mA\n", current_value);
+#endif
+}
 
+// Set gripper motor velocity control value (positive = close, negative = open)
+void set_gripper_velocity(float velocity_value)
+{
+    // Access global motor_instances array (defined outside namespace)
+    MotorInstance* gripper_motor = &::motor_instances[0][6];  // Motor ID 7
+    
+    if (!gripper_motor->enabled) {
+        return;
+    }
+    
+    // 限制速度值在合理范围内
+    if (velocity_value > 3000.0f) velocity_value = 3000.0f;
+    if (velocity_value < -3000.0f) velocity_value = -3000.0f;
+    
+    // KEGU电机需要先使能速度控制模式
+    static bool velocity_mode_enabled = false;
+    if (!velocity_mode_enabled) {
+        gripper_motor->mode = CTRL_MODE_ENABLE_VEL;
+        gripper_motor->target_value = 0.0f;
+        MotorControl_Handler(gripper_motor);
+        velocity_mode_enabled = true;
+        
+        #ifdef ARDUPILOT_BUILD
+        hal.scheduler->delay_microseconds(1000);  // 短暂延迟确保使能成功
+        #endif
+    }
+    
+    gripper_motor->mode = CTRL_MODE_VELOCITY;
+    gripper_motor->target_value = velocity_value;
+    
+    // 使用现有的电机控制处理函数
+    MotorControl_Handler(gripper_motor);
+    
+#ifdef ARDUPILOT_BUILD
+    hal.console->printf("Gripper Velocity Set: %.2f deg/s\n", velocity_value);
+#endif
+}
 
+// Get gripper motor status - KEGU电机从接收处理器获取数据
+float get_gripper_position()
+{
+    // Get the CAN Rx processor singleton
+    CAN_Robot_Rx_Process* rx_processor = CAN_Robot_Rx_Process::get_singleton();
+    if (!rx_processor) {
+        return NAN;  // Return NAN to indicate no valid data
+    }
+    
+    // KEGU夹爪电机使用CAN1 (channel 0), Motor ID 7 -> 数组索引6
+    uint8_t can_channel = 0;  // CAN1
+    uint8_t motor_array_index = 6;  // 电机ID=7对应数组索引6（0-based）
+    
+    // Get KEGU motor status from CAN1
+    const CAN_Robot_Rx_Process::KEGU_Motor_Feedback& kegu_feedback = 
+        rx_processor->get_kegu_motor_status(can_channel, motor_array_index);
+    
+    if (kegu_feedback.last_update_us > 0) {
+        // KEGU电机位置可能以脉冲为单位，需要转换
+        const float pulses_per_degree = 100.0f;  // 根据实际电机规格调整
+        return kegu_feedback.position / pulses_per_degree;
+    }
+    
+    return NAN;  // Return NAN to indicate no valid data
+}
 
+float get_gripper_velocity() 
+{
+    // Get the CAN Rx processor singleton
+    CAN_Robot_Rx_Process* rx_processor = CAN_Robot_Rx_Process::get_singleton();
+    if (!rx_processor) {
+        return NAN;  // Return NAN to indicate no valid data
+    }
+    
+    // KEGU夹爪电机使用CAN1 (channel 0), Motor ID 7 -> 数组索引6
+    uint8_t can_channel = 0;  // CAN1
+    uint8_t motor_array_index = 6;  // 电机ID=7对应数组索引6（0-based）
+    
+    // Get KEGU motor status from CAN1
+    const CAN_Robot_Rx_Process::KEGU_Motor_Feedback& kegu_feedback = 
+        rx_processor->get_kegu_motor_status(can_channel, motor_array_index);
+    
+    if (kegu_feedback.last_update_us > 0) {
+        return kegu_feedback.speed;  // KEGU速度直接使用
+    }
+    
+    return NAN;  // Return NAN to indicate no valid data
+}
 
+float get_gripper_current()
+{
+    // Get the CAN Rx processor singleton
+    CAN_Robot_Rx_Process* rx_processor = CAN_Robot_Rx_Process::get_singleton();
+    if (!rx_processor) {
+        return -2;  // Return -2 to indicate no valid rx_processor
+    }
+    
+    // KEGU夹爪电机使用CAN1 (channel 0), Motor ID 7 -> 数组索引6
+    uint8_t can_channel = 0;  // CAN1
+    uint8_t motor_array_index = 6;  // 电机ID=7对应数组索引6（0-based）
+    
+    // Get KEGU motor status from CAN1
+    const CAN_Robot_Rx_Process::KEGU_Motor_Feedback& kegu_feedback = 
+        rx_processor->get_kegu_motor_status(can_channel, motor_array_index);
+    
+    // 添加详细的调试信息
+    #ifdef ARDUPILOT_BUILD
+    static uint32_t last_debug_time = 0;
+    uint32_t now_ms = AP_HAL::millis();
+    
+    // 每秒打印一次调试信息
+    if (now_ms - last_debug_time > 1000) {
+        last_debug_time = now_ms;
+        
+        // 检查last_update_us是否有效
+        AP::logger().Write_MessageF("GRIPPER_CURRENT_DEBUG: current=%.1f last_update=%llu now=%llu age_ms=%u", 
+                                   kegu_feedback.current, 
+                                   (unsigned long long)kegu_feedback.last_update_us,
+                                   (unsigned long long)AP_HAL::micros64(),
+                                   (unsigned)((AP_HAL::micros64() - kegu_feedback.last_update_us) / 1000));
+        
+        GCS_SEND_TEXT(MAV_SEVERITY_DEBUG, "Gripper Current Debug: %.1fmA update_us=%llu age_ms=%u", 
+                     kegu_feedback.current, (unsigned long long)kegu_feedback.last_update_us,
+                     (unsigned)((AP_HAL::micros64() - kegu_feedback.last_update_us) / 1000));
+    }
+    #endif
+    
+    return kegu_feedback.current;  // 直接返回mA单位
+}
 
-
-
-
-} // namespace MIT_Motor 
+} // namespace MIT_Motor

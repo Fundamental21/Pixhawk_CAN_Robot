@@ -130,6 +130,7 @@ private:
     uint32_t arm_t_counter;
     uint32_t arm_current_point;
     bool arm_initialized;
+    bool gripper_initialized;
     
     // Debug data
     float debug_buffer[700];
@@ -140,6 +141,11 @@ private:
     float motor_positions[6];     // Current motor positions
     float motor_velocities[6];    // Current motor velocities  
     float motor_currents[6];      // Current motor currents
+    
+    // Gripper motor status variables
+    float gripper_position;       // Current gripper position
+    float gripper_velocity;       // Current gripper velocity
+    float gripper_current;        // Current gripper current (mA)
     
     // Trajectory interpolation for smooth robot arm motion
     TrajectoryInterpolator arm_interpolator;
@@ -165,9 +171,23 @@ private:
     
     // Robot arm initialization and control tasks
     void robot_arm_init();
+    void kegu_motor_init();        // KEGU电机专用初始化函数
     void robot_arm_fast_loop();    // 500Hz task
     void robot_arm_control_loop(); // 100Hz task  
     void robot_arm_slow_loop();    // ~20Hz task for logging
+    
+    // Gripper motor control functions (public interface)
+    void set_gripper_current(float current_value);
+    void set_gripper_velocity(float velocity_value);
+    float get_gripper_position();
+    float get_gripper_velocity(); 
+    float get_gripper_current();
+    float get_gripper_target_velocity();  // 获取目标速度
+    float get_gripper_target_current();   // 获取目标电流
+    void gripper_open(float speed_percentage);
+    void gripper_close(float speed_percentage);
+    void gripper_stop();
+    void set_kegu_control_enabled(bool enabled);  // 启用/禁用KEGU自动控制
 
     // must be the first AP_Param variable declared to ensure its
     // constructor runs before the constructors of the other AP_Param
@@ -399,6 +419,7 @@ private:
     void Log_Write_RobotArm1();
     void Log_Write_RobotArm2();
     void Log_Write_InterpolatedTrajectory();
+    void Log_Write_GripperMotor();
     void Log_Write_MotorControlCommands();
     void Log_Write_Vehicle_Startup_Messages();
     void Log_Read(uint16_t log_num, uint16_t start_page, uint16_t end_page);

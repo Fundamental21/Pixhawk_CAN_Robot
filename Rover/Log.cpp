@@ -312,6 +312,17 @@ struct PACKED log_MotorControlCmd2 {
     float feedback_pos6;
 };
 
+// KEGU Gripper Motor Data logging structure
+struct PACKED log_GripperMotor {
+    LOG_PACKET_HEADER;
+    uint64_t time_us;
+    float position;     // 夹爪位置 (度)
+    float velocity;     // 夹爪速度 (度/秒)
+    float current;      // 夹爪电流 (安培)
+    float target_vel;   // 目标速度 (度/秒)
+    float target_cur;   // 目标电流 (安培)
+};
+
 // Write robot arm motor data - Motors 1-3
 void Rover::Log_Write_RobotArm1()
 {
@@ -417,6 +428,32 @@ void Rover::Log_Write_MotorControlCmd2()
         feedback_pos4   : motor_positions[3],
         feedback_pos5   : motor_positions[4],
         feedback_pos6   : motor_positions[5]
+    };
+    logger.WriteBlock(&pkt, sizeof(pkt));
+}
+
+// Write KEGU gripper motor data
+void Rover::Log_Write_GripperMotor()
+{
+    // 获取当前的目标值 - 使用Rover类的方法
+    float target_velocity = get_gripper_target_velocity();
+    float target_current = get_gripper_target_current();
+    
+    // 添加调试输出
+    #ifdef ARDUPILOT_BUILD
+    hal.console->printf("GRIPPER: Pos[%.2f] Vel[%.2f] Curr[%.3f] TgtVel[%.2f] TgtCur[%.3f]\n",
+                       gripper_position, gripper_velocity, gripper_current, 
+                       target_velocity, target_current);
+    #endif
+    
+    struct log_GripperMotor pkt = {
+        LOG_PACKET_HEADER_INIT(LOG_GRIPPER_MSG),
+        time_us         : AP_HAL::micros64(),
+        position        : gripper_position,
+        velocity        : gripper_velocity,
+        current         : gripper_current,
+        target_vel      : target_velocity,
+        target_cur      : target_current
     };
     logger.WriteBlock(&pkt, sizeof(pkt));
 }
@@ -560,6 +597,18 @@ const LogStructure Rover::log_structure[] = {
 
     { LOG_MCMD2_MSG, sizeof(log_MotorControlCmd2),
       "MCMD2", "Qffffff", "TimeUS,CmdPos4,CmdPos5,CmdPos6,FbkPos4,FbkPos5,FbkPos6", "sdddddd", "F000000" },
+
+// @LoggerMessage: GRIP
+// @Description: KEGU Gripper Motor Data
+// @Field: TimeUS: Time since system startup
+// @Field: Pos: Gripper position
+// @Field: Vel: Gripper velocity
+// @Field: Curr: Gripper current
+// @Field: TgtVel: Target velocity
+// @Field: TgtCur: Target current
+
+    { LOG_GRIPPER_MSG, sizeof(log_GripperMotor),
+      "GRIP", "Qfffff", "TimeUS,Pos,Vel,Curr,TgtVel,TgtCur", "sdooAA", "F00000" },
 };
 
 void Rover::log_init(void)
@@ -581,6 +630,7 @@ void Rover::Log_Write_Steering() {}
 void Rover::Log_Write_RobotArm1() {}
 void Rover::Log_Write_RobotArm2() {}
 void Rover::Log_Write_InterpolatedTrajectory() {}
+void Rover::Log_Write_GripperMotor() {}
 void Rover::Log_Write_Vehicle_Startup_Messages() {}
 
 #endif  // LOGGING_ENABLED

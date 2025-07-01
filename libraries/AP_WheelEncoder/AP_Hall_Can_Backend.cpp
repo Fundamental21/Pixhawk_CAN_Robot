@@ -24,12 +24,12 @@ void Hall_Can_Backend::handle_frame(AP_HAL::CANFrame &frame) {
     uint64_t current_time_us = AP_HAL::micros64();
     
     // 直接写入日志消息
-    AP::logger().Write_MessageF("CAN RX: ID=0x%02X data[0]=0x%02X", 
-                               (unsigned)can_id, (unsigned)frame.data[0]);
+    // AP::logger().Write_MessageF("CAN RX: ID=0x%02X data[0]=0x%02X", 
+    //                            (unsigned)can_id, (unsigned)frame.data[0]);
     
-    // 添加调试信息到GCS
-    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "CAN RX: ID=0x%02X data[0]=0x%02X", 
-                 (unsigned)can_id, (unsigned)frame.data[0]);
+    // // 添加调试信息到GCS
+    // GCS_SEND_TEXT(MAV_SEVERITY_INFO, "CAN RX: ID=0x%02X data[0]=0x%02X", 
+    //              (unsigned)can_id, (unsigned)frame.data[0]);
     
     // 确定电机索引
     int motor_index = -1;
@@ -64,8 +64,8 @@ void Hall_Can_Backend::handle_frame(AP_HAL::CANFrame &frame) {
         AP::logger().Write_MessageF("Motor %d: Speed=%.2f raw=%u", 
                                    motor_index+1, (double)motor_states[motor_index].velocity, 
                                    (unsigned)speed_value);
-        GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Motor %d: Speed=%.2f", 
-                     motor_index+1, (double)motor_states[motor_index].velocity);
+        // GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Motor %d: Speed=%.2f", 
+        //              motor_index+1, (double)motor_states[motor_index].velocity);
         
     } else if (frame.data[0] == 0x08) {  // 位置数据
         uint32_t pos_value = (frame.data[1] << 0)  |
@@ -80,8 +80,8 @@ void Hall_Can_Backend::handle_frame(AP_HAL::CANFrame &frame) {
         AP::logger().Write_MessageF("Motor %d: Pos=%.2f raw=%u", 
                                    motor_index+1, (double)motor_states[motor_index].position,
                                    (unsigned)pos_value);
-        GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Motor %d: Pos=%.2f", 
-                     motor_index+1, (double)motor_states[motor_index].position);
+        // GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Motor %d: Pos=%.2f", 
+        //              motor_index+1, (double)motor_states[motor_index].position);
     }
 }
 
@@ -120,8 +120,8 @@ void Hall_Can_Backend::Log_Write_Motor() {
                                        (unsigned long long)(now - motor_states[i].last_update_us));
             
             // 添加调试信息到GCS
-            GCS_SEND_TEXT(MAV_SEVERITY_INFO, "MOTD: ID=%d V=%.2f P=%.2f", 
-                         i+1, (double)motor_states[i].velocity, (double)motor_states[i].position);
+            // GCS_SEND_TEXT(MAV_SEVERITY_INFO, "MOTD: ID=%d V=%.2f P=%.2f", 
+            //              i+1, (double)motor_states[i].velocity, (double)motor_states[i].position);
         }
     }
     

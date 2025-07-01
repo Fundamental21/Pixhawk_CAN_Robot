@@ -71,6 +71,18 @@ namespace MIT_Motor {
     // Direct transfer functions (for skipping interpolation)
     bool get_next_sparse_point(float joint_angles[6]);
     bool add_dense_point(const float joint_angles[6]);
+    
+    // Gripper motor control functions
+    void set_gripper_current(float current_value);
+    void set_gripper_velocity(float velocity_value);
+    float get_gripper_position();
+    float get_gripper_velocity();
+    float get_gripper_current();
+    
+    // Convenient gripper control functions  
+    void gripper_open(float speed_percentage);
+    void gripper_close(float speed_percentage);
+    void gripper_stop();
 }
 #endif
 
