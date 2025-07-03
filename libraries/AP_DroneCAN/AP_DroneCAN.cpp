@@ -59,6 +59,7 @@
 // Include CAN Robot modules for robot_can_tx_loop
 #include <CAN_Robot_Tx/CAN_Robot_Tx_Queue.h>
 #include <CAN_Robot_Tx/CAN_Robot_Tx_Process.h>
+#include <CAN_Robot_Rx/CAN_Robot_Rx_Process.h>
 
 #if AP_DRONECAN_SERIAL_ENABLED
 #include "AP_DroneCAN_serial.h"
@@ -534,6 +535,13 @@ void AP_DroneCAN::init(uint8_t driver_index, bool enable_filters)
 
     if (!hal.scheduler->thread_create(FUNCTOR_BIND_MEMBER(&AP_DroneCAN::robot_can_tx_loop, void), _thread_name, DRONECAN_STACK_SIZE, AP_HAL::Scheduler::PRIORITY_CAN, 0)) {
         debug_dronecan(AP_CANManager::LOG_ERROR, "Can: couldn't create robot CAN TX thread\n\r");
+        return;
+    }
+
+    hal.util->snprintf(_thread_name, sizeof(_thread_name), "robot_tx_CAN2_%u", driver_index);
+
+    if (!hal.scheduler->thread_create(FUNCTOR_BIND_MEMBER(&AP_DroneCAN::robot_can2_tx_loop, void), _thread_name, DRONECAN_STACK_SIZE, AP_HAL::Scheduler::PRIORITY_CAN, 0)) {
+        debug_dronecan(AP_CANManager::LOG_ERROR, "Can: couldn't create robot CAN2 TX thread\n\r");
         return;
     }
 
@@ -2066,6 +2074,16 @@ bool AP_DroneCAN::write_aux_frame(AP_HAL::CANFrame &out_frame, const uint64_t ti
     return canard_iface.write_aux_frame(out_frame, timeout_us);
 }
 
+bool AP_DroneCAN::write_aux_frame_CAN2(AP_HAL::CANFrame &out_frame, const uint64_t timeout_us)
+{
+    if (out_frame.isExtended()) {
+        // don't allow extended frames to be sent by auxillary driver
+        return false;
+    }
+    
+    return canard_iface.write_aux_frame_CAN2(out_frame, timeout_us);
+}
+
 // Robot CAN TX thread loop - processes motor command queue
 void AP_DroneCAN::robot_can_tx_loop(void)
 {
@@ -2184,6 +2202,102 @@ void AP_DroneCAN::robot_can_tx_loop(void)
         if (queue) {
             queue->log_status();
         }
+    }
+}
+
+void AP_DroneCAN::robot_can2_tx_loop(void)
+{
+    while (true) {
+        if (!_initialized) {
+            hal.scheduler->delay_microseconds(1000);
+            continue;
+        }
+
+        // Get the CAN Rx processor singleton to access motor status
+        CAN_Robot_Rx_Process* rx_processor = CAN_Robot_Rx_Process::get_singleton();
+        if (!rx_processor) {
+            hal.scheduler->delay(10);
+            continue;
+        }
+
+        // Motor position data for 6 motors (motor IDs 1-6, array indices 0-5)
+        float motor_positions[6];
+        bool data_valid = false;
+
+        // Collect motor position data from CAN1 (channel 0)
+        uint8_t can_channel = 0;  // CAN1 channel
+        for (uint8_t i = 0; i < 6; i++) {
+            uint8_t motor_array_index = i;  // motor_id 1-6 maps to array index 0-5
+            const CAN_Robot_Rx_Process::MIT_Motor_Feedback& motor_status = 
+                rx_processor->get_mit_motor_status(can_channel, motor_array_index);
+            
+            // Check if data is recent (within last 500ms)
+            uint64_t now_us = AP_HAL::micros64();
+            if (motor_status.last_update_us > 0 && 
+                (now_us - motor_status.last_update_us) < 500000) {
+                
+                // Use position data directly in degrees
+                motor_positions[i] = motor_status.position;
+                data_valid = true;
+            } else {
+                // Use default value for motors with no recent data
+                motor_positions[i] = 0.0f;
+            }
+        }
+
+        // Only proceed if we have at least some valid motor data
+        if (data_valid) {
+            // Create the 6 CAN frames according to new specification
+            // Each frame contains one motor's position data
+            AP_HAL::CANFrame frames[6];
+            
+            for (uint8_t i = 0; i < 6; i++) {
+                // Convert float position to 4-byte representation
+                union {
+                    float f;
+                    uint8_t bytes[4];
+                } position_union;
+                position_union.f = motor_positions[i];
+                
+                frames[i].id = 0x200;  // All frames use same CAN ID: 0x200
+                frames[i].dlc = 8;
+                frames[i].data[0] = i;                      // Motor ID (0x00-0x05)
+                frames[i].data[1] = position_union.bytes[0]; // Position byte 0 (LSB)
+                frames[i].data[2] = position_union.bytes[1]; // Position byte 1
+                frames[i].data[3] = position_union.bytes[2]; // Position byte 2
+                frames[i].data[4] = position_union.bytes[3]; // Position byte 3 (MSB)
+                frames[i].data[5] = 0x00;                   // Padding byte 1
+                frames[i].data[6] = 0x00;                   // Padding byte 2
+                frames[i].data[7] = (i == 5) ? 0x01 : 0x00; // Last frame (motor 6) has 0x01, others 0x00
+            }
+
+            // Send all 6 frames with small delays between them
+            for (uint8_t i = 0; i < 6; i++) {
+                if (write_aux_frame_CAN2(frames[i], 10 * 1000)) {
+                    debug_dronecan(AP_CANManager::LOG_DEBUG, 
+                                 "CAN2 Motor%u sent: ID=0x%X Pos=%.2f", 
+                                 i + 1, (unsigned)frames[i].id, (double)motor_positions[i]);
+                } else {
+                    debug_dronecan(AP_CANManager::LOG_ERROR, 
+                                 "CAN2 Motor%u failed: ID=0x%X", 
+                                 i + 1, (unsigned)frames[i].id);
+                }
+                hal.scheduler->delay_microseconds(500);  // 0.5ms delay between frames
+            }
+
+            // Log periodic status
+            static uint32_t last_status_log_ms = 0;
+            uint32_t now_ms = AP_HAL::millis();
+            if (now_ms - last_status_log_ms > 5000) {  // Log every 5 seconds
+                last_status_log_ms = now_ms;
+                AP::logger().Write_MessageF("CAN2_TX_STATUS: Motor_Pos[%.2f,%.2f,%.2f,%.2f,%.2f,%.2f]",
+                                           (double)motor_positions[0], (double)motor_positions[1], (double)motor_positions[2], 
+                                           (double)motor_positions[3], (double)motor_positions[4], (double)motor_positions[5]);
+            }
+        }
+
+        // Loop at 10Hz (100ms period)
+        hal.scheduler->delay(100);
     }
 }
 

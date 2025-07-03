@@ -508,4 +508,16 @@ bool CanardInterface::write_aux_frame(AP_HAL::CANFrame &out_frame, const uint64_
     return ret;
 }
 
+bool CanardInterface::write_aux_frame_CAN2(AP_HAL::CANFrame &out_frame, const uint64_t timeout_us)
+{
+    bool ret = false;
+        
+    if (ifaces[1] == NULL) {
+        return false;
+    }
+    ret |= ifaces[1]->send(out_frame, timeout_us, 0) > 0;
+    
+    return ret;
+}
+
 #endif // #if HAL_ENABLE_DRONECAN_DRIVERS

@@ -252,8 +252,6 @@ uint32_t kegu_command_timestamp = 0;      // 命令时间戳
 
 void Rover::robot_arm_control_loop()
 {
-
-
     // Initialize CAN Rx modules if not already done
     static bool rx_initialized = false;
     if (!rx_initialized) {
@@ -520,27 +518,21 @@ void Rover::robot_arm_control_loop()
     // Initialize trajectory interpolator separately
     static bool interpolator_initialized = false;
     if (!interpolator_initialized) {
-        // 初始化轨迹插值器
-        arm_interpolator.init(0.01f, 10.0f, 100.0f); // Ts=0.01s, Vmax=10deg/s, Amax=100deg/s²
-        
-        // 设置初始位置为当前电机位置
-        float initial_pos[JOINT_DOF];
-        
-        // 重新获取所有电机的当前位置数据进行判断
+        // 第一步：必须先获得所有电机的有效当前位置，否则不进行插值器初始化
         float current_positions[JOINT_MOTOR_COUNT];
         bool all_positions_valid = true;
         
         #ifdef ARDUPILOT_BUILD
-        hal.console->printf("Getting motor positions for interpolator initialization...\n");
+        hal.console->printf("Checking motor positions for interpolator initialization...\n");
         #endif
         
         // 获取所有电机的当前位置
         for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
             MotorInstance* m = joint_motor_list[i];
             current_positions[i] = MIT_Motor::get_motor_position(m->can_id, m->motor_id);
-            // current_positions[i] = 0;
-            // 检查获取到的位置是否有效
-            if (isnan(current_positions[i]) || fabsf(current_positions[i]) > 360.0f) {
+            
+            // 检查获取到的位置是否有效（不是NaN且在合理范围内）
+            if (isnan(current_positions[i]) || fabsf(current_positions[i]) > 720.0f) {
                 all_positions_valid = false;
                 #ifdef ARDUPILOT_BUILD
                 hal.console->printf("Motor %d position invalid: %.2f, waiting for valid data...\n", 
@@ -550,18 +542,22 @@ void Rover::robot_arm_control_loop()
             }
         }
         
-        // 如果任何一个电机位置无效，就不初始化插值器，等待下次循环
+        // 如果任何一个电机位置无效，就直接返回，等待下次循环重新检查
         if (!all_positions_valid) {
             return; // 退出，下次循环再尝试
         }
         
-        // 所有位置都有效，更新last_position并设置初始位置
+        // 所有位置都有效，更新last_position
         for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
             MotorInstance* m = joint_motor_list[i];
             m->last_position = current_positions[i];
         }
         
-        // 所有电机位置都有效，设置初始位置
+        // 第二步：初始化轨迹插值器
+        arm_interpolator.init(0.01f, 10.0f, 100.0f); // Ts=0.01s, Vmax=10deg/s, Amax=100deg/s²
+        
+        // 第三步：设置初始位置为当前电机位置
+        float initial_pos[JOINT_DOF];
         for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
             initial_pos[i] = current_positions[i];
         }
@@ -570,7 +566,10 @@ void Rover::robot_arm_control_loop()
         interpolator_initialized = true;
         
         #ifdef ARDUPILOT_BUILD
-        hal.console->printf("Trajectory interpolator initialized, waiting for CAN2 trajectory data...\n");
+        hal.console->printf("Trajectory interpolator initialized with valid motor positions\n");
+        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
+            hal.console->printf("Motor %d: position %.2f degrees\n", i+1, current_positions[i]);
+        }
         #endif
     }
 

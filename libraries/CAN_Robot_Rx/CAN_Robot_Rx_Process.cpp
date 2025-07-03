@@ -16,13 +16,13 @@ void CAN_Robot_Rx_Process::init(void)
 
 // 多帧缓存结构体
 struct CAN2TrajectoryFrameCache {
-    int16_t joints[6];
-    bool received[3];
+    float joints[6];    // 改为float支持4字节位置数据
+    bool received[6];     // 改为6个元素对应6个电机
     bool is_final;
     uint64_t timestamp_us;
     CAN2TrajectoryFrameCache() : is_final(false), timestamp_us(0) {
         for (int i = 0; i < 6; i++) joints[i] = 0;
-        for (int i = 0; i < 3; i++) received[i] = false;
+        for (int i = 0; i < 6; i++) received[i] = false;  // 初始化6个元素
     }
 };
 static CAN2TrajectoryFrameCache traj_cache[16]; // 最多缓存16个轨迹点
@@ -56,6 +56,7 @@ void CAN_Robot_Rx_Process::process_all_rx_messages(void)
             process_kegu_motor_message(msg);
         } else {
             // 处理其他机器人通信消息
+            GCS_SEND_TEXT(MAV_SEVERITY_INFO, "ROBOT_MSG_RECEIVED");
             process_robot_command_message(msg);
         }
         
@@ -102,8 +103,8 @@ void CAN_Robot_Rx_Process::process_kegu_motor_message(const CAN_Robot_Rx_Queue::
     
     uint8_t motor_index = extract_motor_id(msg.motor_id);  // 这现在是数组索引
     if (motor_index >= MAX_MOTORS_PER_CAN) {
-        GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "KEGU Motor Index Out of Range: CAN_ID=0x%lX index=%d max=%d", 
-                     (unsigned long)msg.motor_id, motor_index, MAX_MOTORS_PER_CAN);
+        // GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "KEGU Motor Index Out of Range: CAN_ID=0x%lX index=%d max=%d", 
+        //              (unsigned long)msg.motor_id, motor_index, MAX_MOTORS_PER_CAN);
         return;
     }
     
@@ -112,8 +113,8 @@ void CAN_Robot_Rx_Process::process_kegu_motor_message(const CAN_Robot_Rx_Queue::
     
     // 添加调试信息：显示接收到的原始消息
     uint8_t actual_motor_id = (msg.motor_id == 0x07) ? 7 : (motor_index + 1);
-    GCS_SEND_TEXT(MAV_SEVERITY_DEBUG, "KEGU_MSG_RX: CAN%d CAN_ID=0x%lX Motor_ID=%d index=%d DLC=%d", 
-                 (int)msg.can_id + 1, (unsigned long)msg.motor_id, actual_motor_id, motor_index, msg.dlc);
+    // GCS_SEND_TEXT(MAV_SEVERITY_DEBUG, "KEGU_MSG_RX: CAN%d CAN_ID=0x%lX Motor_ID=%d index=%d DLC=%d", 
+    //              (int)msg.can_id + 1, (unsigned long)msg.motor_id, actual_motor_id, motor_index, msg.dlc);
     
     decode_kegu_feedback(msg, feedback);
     feedback.last_update_us = msg.timestamp_us;
@@ -124,9 +125,9 @@ void CAN_Robot_Rx_Process::process_kegu_motor_message(const CAN_Robot_Rx_Queue::
     AP::logger().Write_MessageF("KEGU_RX: CAN%d CAN_ID:0x%X Motor_ID:%d(idx%d) Spd:%.1f Curr:%.1f Pos:%d", 
                                (int)msg.can_id + 1, (unsigned)msg.motor_id, actual_motor_id, motor_index,
                                feedback.speed, feedback.current, (int)feedback.position);
-    GCS_SEND_TEXT(MAV_SEVERITY_DEBUG, "KEGU_RX: CAN%d CAN_ID:0x%X Motor_ID:%d(idx%d) Spd:%.1f Curr:%.1f Pos:%d", 
-                               (int)msg.can_id + 1, (unsigned)msg.motor_id, actual_motor_id, motor_index,
-                               feedback.speed, feedback.current, (int)feedback.position);
+    // GCS_SEND_TEXT(MAV_SEVERITY_DEBUG, "KEGU_RX: CAN%d CAN_ID:0x%X Motor_ID:%d(idx%d) Spd:%.1f Curr:%.1f Pos:%d", 
+    //                            (int)msg.can_id + 1, (unsigned)msg.motor_id, actual_motor_id, motor_index,
+    //                            feedback.speed, feedback.current, (int)feedback.position);
 
 }
 
@@ -134,10 +135,19 @@ void CAN_Robot_Rx_Process::process_robot_command_message(const CAN_Robot_Rx_Queu
 {
     _cmd_msg_count++;
     
+    // 添加调试信息：显示接收到的所有机器人命令消息的详细信息
+    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "ROBOT_CMD_DBG: CAN%d ID:0x%X DLC:%d", 
+                  (int)msg.can_id + 1, (unsigned)msg.motor_id, msg.dlc);
+    
     // 检查是否为CAN2轨迹命令 (CAN2, ID = 0x100)
     if (msg.can_id == 1 && msg.motor_id == 0x100 && msg.dlc >= 8) {
         // 处理CAN2轨迹数据
         process_can2_trajectory_command(msg);
+        GCS_SEND_TEXT(MAV_SEVERITY_INFO, "CAN2_TRAJ_RX");
+        return;
+    } else if (msg.can_id == 1 && msg.motor_id == 0x100) {
+        // CAN2轨迹命令但数据长度不足
+        GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "CAN2_TRAJ_SHORT: DLC=%d (need >=8)", msg.dlc);
         return;
     }
     
@@ -161,58 +171,108 @@ void CAN_Robot_Rx_Process::process_can2_trajectory_command(const CAN_Robot_Rx_Qu
 {
     if (msg.dlc < 8) return; // 数据长度不足
 
-    uint8_t point_id = msg.data[0] & 0x0F; // 支持0~15个轨迹点
-    uint8_t frame_id = msg.data[1] & 0x03; // 0,1,2
+    uint8_t point_id = msg.data[0]; // 位置点编号（00, 01, 02...）
+    uint8_t motor_id = msg.data[1]; // 电机编号（00-05对应6个电机）
 
-    // 解析2个关节位置（int16小端）
-    int16_t joint_a = (int16_t)(msg.data[2] | (msg.data[3] << 8));
-    int16_t joint_b = (int16_t)(msg.data[4] | (msg.data[5] << 8));
-    bool is_final = false;
-    if (frame_id == 2) {
-        is_final = (msg.data[6] | (msg.data[7] << 8)) & 0x01;
+    // 检查电机ID是否有效
+    if (motor_id >= 6) {
+        GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "CAN2_TRAJ: Invalid motor_id %d", motor_id);
+        return;
     }
 
-    // 写入缓存
-    traj_cache[point_id].joints[frame_id*2] = joint_a;
-    traj_cache[point_id].joints[frame_id*2+1] = joint_b;
-    traj_cache[point_id].received[frame_id] = true;
-    if (frame_id == 2) {
-        traj_cache[point_id].is_final = is_final;
-        traj_cache[point_id].timestamp_us = msg.timestamp_us;
+    // 解析4字节位置数据（直接接收float格式）
+    union {
+        float f;
+        uint8_t bytes[4];
+    } position_union;
+    
+    // 从CAN数据中读取4字节位置数据（小端格式）
+    position_union.bytes[0] = msg.data[2]; // Position byte 0 (LSB)
+    position_union.bytes[1] = msg.data[3]; // Position byte 1
+    position_union.bytes[2] = msg.data[4]; // Position byte 2
+    position_union.bytes[3] = msg.data[5]; // Position byte 3 (MSB)
+    
+    float position_value = position_union.f;
+    
+    // 发送单个电机位置值到地面站
+    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "CAN2_POS: Point%d Motor%d Pos:%.2f Final:%d", 
+                  point_id, motor_id, position_value, (msg.data[7] == 0x01) ? 1 : 0);
+    
+    // 检查是否为最终点（第8字节是01表示最后一个点的最后一帧）
+    bool is_final_frame = (msg.data[7] == 0x01);
+
+    // 添加调试信息显示接收到的原始数据
+    #ifdef ARDUPILOT_BUILD
+    extern const AP_HAL::HAL& hal;
+    hal.console->printf("CAN2_TRAJ_RX: Point=%d Motor=%d Position=%.2f Final=%d [%02X %02X %02X %02X %02X %02X %02X %02X]\n",
+                       point_id, motor_id, position_value, is_final_frame ? 1 : 0,
+                       msg.data[0], msg.data[1], msg.data[2], msg.data[3], 
+                       msg.data[4], msg.data[5], msg.data[6], msg.data[7]);
+    #endif
+
+    // 写入缓存（直接存储float值）
+    traj_cache[point_id].joints[motor_id] = position_value;
+    traj_cache[point_id].received[motor_id] = true;
+    
+    // 如果这是最终帧，标记整个轨迹点为最终点
+    if (is_final_frame) {
+        traj_cache[point_id].is_final = true;
+    }
+    
+    traj_cache[point_id].timestamp_us = msg.timestamp_us;
+
+    // 检查是否所有6个电机的数据都收齐了
+    bool all_motors_received = true;
+    for (uint8_t i = 0; i < 6; i++) {
+        if (!traj_cache[point_id].received[i]) {
+            all_motors_received = false;
+            break;
+        }
     }
 
-    // 如果3帧都收齐
-    if (traj_cache[point_id].received[0] && traj_cache[point_id].received[1] && traj_cache[point_id].received[2]) {
+    // 如果6个电机的数据都收齐
+    if (all_motors_received) {
         CAN2TrajectoryData trajectory_item;
         for (int i = 0; i < 6; ++i) {
-            trajectory_item.joint_positions[i] = (float)traj_cache[point_id].joints[i];
+            trajectory_item.joint_positions[i] = traj_cache[point_id].joints[i]; // 直接使用float值
         }
         trajectory_item.is_final_point = traj_cache[point_id].is_final;
         trajectory_item.timestamp_us = traj_cache[point_id].timestamp_us;
+        
         if (trajectory_queue.push(trajectory_item)) {
-            AP::logger().Write_MessageF("CAN2_TRAJ: [%d,%d,%d,%d,%d,%d] Final:%d Queue:%d",
-                traj_cache[point_id].joints[0], traj_cache[point_id].joints[1],
-                traj_cache[point_id].joints[2], traj_cache[point_id].joints[3],
-                traj_cache[point_id].joints[4], traj_cache[point_id].joints[5],
-                traj_cache[point_id].is_final ? 1 : 0, trajectory_queue.size());
+            
+            // 发送轨迹数据到地面站
+            GCS_SEND_TEXT(MAV_SEVERITY_INFO, "CAN2_TRAJ: Point%d [%.2f,%.2f,%.2f,%.2f,%.2f,%.2f] Final:%d Queue:%d",
+                point_id,
+                trajectory_item.joint_positions[0], trajectory_item.joint_positions[1],
+                trajectory_item.joint_positions[2], trajectory_item.joint_positions[3],
+                trajectory_item.joint_positions[4], trajectory_item.joint_positions[5],
+                trajectory_item.is_final_point ? 1 : 0, trajectory_queue.size());
+            
             #ifdef ARDUPILOT_BUILD
             extern const AP_HAL::HAL& hal;
-            hal.console->printf("CAN2 Trajectory: [%d, %d, %d, %d, %d, %d] Final:%d Queue:%d\n",
-                traj_cache[point_id].joints[0], traj_cache[point_id].joints[1],
-                traj_cache[point_id].joints[2], traj_cache[point_id].joints[3],
-                traj_cache[point_id].joints[4], traj_cache[point_id].joints[5],
-                traj_cache[point_id].is_final ? 1 : 0, trajectory_queue.size());
+            hal.console->printf("CAN2 Trajectory Point%d: [%.2f, %.2f, %.2f, %.2f, %.2f, %.2f] Final:%d Queue:%d\n",
+                point_id,
+                trajectory_item.joint_positions[0], trajectory_item.joint_positions[1],
+                trajectory_item.joint_positions[2], trajectory_item.joint_positions[3],
+                trajectory_item.joint_positions[4], trajectory_item.joint_positions[5],
+                trajectory_item.is_final_point ? 1 : 0, trajectory_queue.size());
             #endif
         } else {
-            AP::logger().Write_MessageF("CAN2_TRAJ_WARNING: Queue full, dropping trajectory point");
+            AP::logger().Write_MessageF("CAN2_TRAJ_WARNING: Queue full, dropping trajectory point %d", point_id);
             #ifdef ARDUPILOT_BUILD
             extern const AP_HAL::HAL& hal;
-            hal.console->printf("CAN2 Trajectory WARNING: Queue full, dropping trajectory point\n");
+            hal.console->printf("CAN2 Trajectory WARNING: Queue full, dropping trajectory point %d\n", point_id);
             #endif
         }
-        // 清空缓存
-        for (int i = 0; i < 3; i++) traj_cache[point_id].received[i] = false;
+        
+        // 清空缓存，准备接收下一个轨迹点
+        for (int i = 0; i < 6; i++) {
+            traj_cache[point_id].received[i] = false;
+        }
+        traj_cache[point_id].is_final = false;
     }
+    
     last_trajectory_receive_time = AP_HAL::millis();
 }
 
@@ -227,7 +287,7 @@ void CAN_Robot_Rx_Process::process_kegu_control_command(const CAN_Robot_Rx_Queue
     AP::logger().Write_MessageF("KEGU_CMD: CAN%d ID:0x%X CMD:0x%02X DLC:%d", 
                                (int)msg.can_id + 1, (unsigned)msg.motor_id, command, msg.dlc);
     
-    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "KEGU Command received: 0x%02X", command);
+    // GCS_SEND_TEXT(MAV_SEVERITY_INFO, "KEGU Command received: 0x%02X", command);
     
     // 设置全局标志，让robot_arm_control_loop处理
     extern uint8_t kegu_external_command;
@@ -271,8 +331,8 @@ uint8_t CAN_Robot_Rx_Process::extract_motor_id(uint32_t motor_id) const
                 return extracted_id - 1;  // 转换为0-based数组索引（0-6）
             } else {
                 // 无效的电机ID，记录错误并返回默认值
-                GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "KEGU Invalid Motor ID: 0x%lX extracted_id=%d", 
-                             (unsigned long)motor_id, extracted_id);
+                // GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "KEGU Invalid Motor ID: 0x%lX extracted_id=%d", 
+                //              (unsigned long)motor_id, extracted_id);
                 return 0;  // 返回默认索引0
             }
         } else if (motor_id == 0x07) {
@@ -319,7 +379,7 @@ void CAN_Robot_Rx_Process::decode_kegu_feedback(const CAN_Robot_Rx_Queue::CANRxM
 {
     // 使用实际CAN ID而不是CAN总线ID来判断消息类型
     uint16_t msg_type = (msg.motor_id >> 8) & 0xFF;
-    GCS_SEND_TEXT(MAV_SEVERITY_DEBUG, "KEGU CAN_ID: 0x%lX, msg_type: 0x%02X", (unsigned long)msg.motor_id, msg_type);
+    // GCS_SEND_TEXT(MAV_SEVERITY_DEBUG, "KEGU CAN_ID: 0x%lX, msg_type: 0x%02X", (unsigned long)msg.motor_id, msg_type);
     
     if (msg_type == 0x02 && msg.dlc >= 6) {
         // 0x280+电机ID: 速度和电流反馈 (6字节)
@@ -336,7 +396,7 @@ void CAN_Robot_Rx_Process::decode_kegu_feedback(const CAN_Robot_Rx_Queue::CANRxM
         AP::logger().Write_MessageF("KEGU_CURRENTrx: CAN_ID:0x%X Raw:%d(10mA) Decoded:%.1f(mA)", 
                                    (unsigned)msg.motor_id, current_raw, feedback.current);
                 // 同时使用GCS发送文本消息
-        GCS_SEND_TEXT(MAV_SEVERITY_DEBUG, "KEGU Currentrx: %.2fmA", feedback.current);
+        // GCS_SEND_TEXT(MAV_SEVERITY_DEBUG, "KEGU Currentrx: %.2fmA", feedback.current);
     } else if (msg_type == 0x03 && msg.dlc >= 4) {
         // 0x380+电机ID: 位置反馈 (4字节)
         // byte0-3: 当前位置

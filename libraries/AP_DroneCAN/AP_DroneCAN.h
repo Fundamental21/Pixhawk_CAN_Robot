@@ -93,6 +93,9 @@ public:
     // handler for outgoing frames for auxillary drivers
     bool write_aux_frame(AP_HAL::CANFrame &out_frame, const uint64_t timeout_us) override;
     
+    // handler for outgoing frames to CAN2
+    bool write_aux_frame_CAN2(AP_HAL::CANFrame &out_frame, const uint64_t timeout_us);
+   
     uint8_t get_driver_index() const { return _driver_index; }
 
     // define string with length structure
@@ -182,6 +185,55 @@ private:
     void wheel_can_drive_loop(void);
 
     void robot_can_tx_loop(void);
+
+    void robot_can2_tx_loop(void);
+
+    // CAN2 TX queue for motor status frames
+    struct CAN2_TX_Frame {
+        AP_HAL::CANFrame frame;
+        uint32_t timestamp_us;
+        
+        CAN2_TX_Frame() {
+            timestamp_us = 0;
+        }
+    };
+    
+    struct CAN2_TX_Queue {
+        static const uint8_t MAX_QUEUE_SIZE = 20;
+        CAN2_TX_Frame frames[MAX_QUEUE_SIZE];
+        uint8_t head;
+        uint8_t tail;
+        uint8_t count;
+        
+        CAN2_TX_Queue() : head(0), tail(0), count(0) {}
+        
+        bool push(const AP_HAL::CANFrame& frame) {
+            if (count >= MAX_QUEUE_SIZE) {
+                return false;
+            }
+            frames[tail].frame = frame;
+            frames[tail].timestamp_us = AP_HAL::micros();
+            tail = (tail + 1) % MAX_QUEUE_SIZE;
+            count++;
+            return true;
+        }
+        
+        bool pop(AP_HAL::CANFrame& frame) {
+            if (count == 0) {
+                return false;
+            }
+            frame = frames[head].frame;
+            head = (head + 1) % MAX_QUEUE_SIZE;
+            count--;
+            return true;
+        }
+        
+        bool is_empty() const { return count == 0; }
+        bool is_full() const { return count >= MAX_QUEUE_SIZE; }
+        uint8_t size() const { return count; }
+    };
+    
+    CAN2_TX_Queue _can2_tx_queue;
 
     void send_heartbeat(uint8_t can_id);
 
