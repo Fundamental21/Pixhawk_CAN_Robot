@@ -2087,8 +2087,8 @@ bool AP_DroneCAN::write_aux_frame_CAN2(AP_HAL::CANFrame &out_frame, const uint64
 // Robot CAN TX thread loop - processes motor command queue
 void AP_DroneCAN::robot_can_tx_loop(void)
 {
-    // Motor IDs for 6 motors (1-6)
-    static const uint8_t motor_ids[6] = {1, 2, 3, 4, 5, 6};
+    // 双臂配置：ARM1(1-6) + ARM2(8-13)，总共12个关节电机
+    static const uint8_t motor_ids[12] = {1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13};
     
     while (true) {
         if (!_initialized) {
@@ -2105,8 +2105,8 @@ void AP_DroneCAN::robot_can_tx_loop(void)
 
         // bool any_command_processed = false;
         
-        // Process all 6 joint motors in one loop: set position + get status
-        for (uint8_t i = 0; i < 6; i++) {
+        // Process all 12 joint motors (dual arm): set position + get status
+        for (uint8_t i = 0; i < 12; i++) {
             // 1. Try to get and send position command for this motor
             CAN_Robot_Tx_Queue::MotorCommand cmd;
             if (queue->get_next_command(cmd)) {
@@ -2152,17 +2152,19 @@ void AP_DroneCAN::robot_can_tx_loop(void)
             GET_frame.data[0] = 0x08;
             write_aux_frame(GET_frame, 10 * 1000); // GET_POSITION
             hal.scheduler->delay_microseconds(200);
-            GET_frame.data[0] = 0x06;
-            write_aux_frame(GET_frame, 10 * 1000); // GET_VELOCITY
-            hal.scheduler->delay_microseconds(200);
-            GET_frame.data[0] = 0x04;
-            write_aux_frame(GET_frame, 10 * 1000); // GET_CURRENT
-            hal.scheduler->delay_microseconds(200);
+            // GET_VELOCITY - 注释掉，减少CAN负载
+            // GET_frame.data[0] = 0x06;
+            // write_aux_frame(GET_frame, 10 * 1000); // GET_VELOCITY
+            // hal.scheduler->delay_microseconds(200);
+            // GET_CURRENT - 注释掉，减少CAN负载
+            // GET_frame.data[0] = 0x04;
+            // write_aux_frame(GET_frame, 10 * 1000); // GET_CURRENT
+            // hal.scheduler->delay_microseconds(200);
         }
         
-        // Process gripper motor (ID=7) commands - no GET requests needed as it auto-reports
+        // Process gripper motors (ARM1: ID=7, ARM2: ID=14) - no GET requests needed as they auto-report
         CAN_Robot_Tx_Queue::MotorCommand gripper_cmd;
-        if (queue->get_next_command(gripper_cmd) && gripper_cmd.motor_id == 7) {
+        if (queue->get_next_command(gripper_cmd) && (gripper_cmd.motor_id == 7 || gripper_cmd.motor_id == 14)) {
             // Create CAN frame for gripper control (current or velocity)
             AP_HAL::CANFrame gripper_frame = CAN_Robot_Tx_Process::create_motor_frame(
                 gripper_cmd.can_id, 
@@ -2220,14 +2222,21 @@ void AP_DroneCAN::robot_can2_tx_loop(void)
             continue;
         }
 
-        // Motor position data for 6 motors (motor IDs 1-6, array indices 0-5)
-        float motor_positions[6];
+        // Motor position data for 12 motors (ARM1: IDs 1-6, ARM2: IDs 8-13)
+        float motor_positions[12];
         bool data_valid = false;
 
         // Collect motor position data from CAN1 (channel 0)
         uint8_t can_channel = 0;  // CAN1 channel
-        for (uint8_t i = 0; i < 6; i++) {
-            uint8_t motor_array_index = i;  // motor_id 1-6 maps to array index 0-5
+        for (uint8_t i = 0; i < 12; i++) {
+            // ARM1: motor_id 1-6 maps to array index 0-5
+            // ARM2: motor_id 8-13 maps to array index 7-12
+            uint8_t motor_array_index;
+            if (i < 6) {
+                motor_array_index = i;  // ARM1: index 0-5
+            } else {
+                motor_array_index = i + 1;  // ARM2: index 7-12 (skip index 6 which is gripper)
+            }
             const CAN_Robot_Rx_Process::MIT_Motor_Feedback& motor_status = 
                 rx_processor->get_mit_motor_status(can_channel, motor_array_index);
             
@@ -2247,11 +2256,11 @@ void AP_DroneCAN::robot_can2_tx_loop(void)
 
         // Only proceed if we have at least some valid motor data
         if (data_valid) {
-            // Create the 6 CAN frames according to new specification
+            // Create the 12 CAN frames for dual-arm configuration
             // Each frame contains one motor's position data
-            AP_HAL::CANFrame frames[6];
+            AP_HAL::CANFrame frames[12];
             
-            for (uint8_t i = 0; i < 6; i++) {
+            for (uint8_t i = 0; i < 12; i++) {
                 // Convert float position to 4-byte representation
                 union {
                     float f;
@@ -2261,18 +2270,18 @@ void AP_DroneCAN::robot_can2_tx_loop(void)
                 
                 frames[i].id = 0x200;  // All frames use same CAN ID: 0x200
                 frames[i].dlc = 8;
-                frames[i].data[0] = i;                      // Motor ID (0x00-0x05)
+                frames[i].data[0] = i;                      // Motor ID (0x00-0x0B for 12 motors)
                 frames[i].data[1] = position_union.bytes[0]; // Position byte 0 (LSB)
                 frames[i].data[2] = position_union.bytes[1]; // Position byte 1
                 frames[i].data[3] = position_union.bytes[2]; // Position byte 2
                 frames[i].data[4] = position_union.bytes[3]; // Position byte 3 (MSB)
                 frames[i].data[5] = 0x00;                   // Padding byte 1
                 frames[i].data[6] = 0x00;                   // Padding byte 2
-                frames[i].data[7] = (i == 5) ? 0x01 : 0x00; // Last frame (motor 6) has 0x01, others 0x00
+                frames[i].data[7] = (i == 11) ? 0x01 : 0x00; // Last frame (motor 12) has 0x01, others 0x00
             }
 
-            // Send all 6 frames with small delays between them
-            for (uint8_t i = 0; i < 6; i++) {
+            // Send all 12 frames with small delays between them
+            for (uint8_t i = 0; i < 12; i++) {
                 if (write_aux_frame_CAN2(frames[i], 10 * 1000)) {
                     debug_dronecan(AP_CANManager::LOG_DEBUG, 
                                  "CAN2 Motor%u sent: ID=0x%X Pos=%.2f", 
@@ -2290,9 +2299,11 @@ void AP_DroneCAN::robot_can2_tx_loop(void)
             uint32_t now_ms = AP_HAL::millis();
             if (now_ms - last_status_log_ms > 5000) {  // Log every 5 seconds
                 last_status_log_ms = now_ms;
-                AP::logger().Write_MessageF("CAN2_TX_STATUS: Motor_Pos[%.2f,%.2f,%.2f,%.2f,%.2f,%.2f]",
+                AP::logger().Write_MessageF("CAN2_TX_STATUS: ARM1[%.2f,%.2f,%.2f,%.2f,%.2f,%.2f] ARM2[%.2f,%.2f,%.2f,%.2f,%.2f,%.2f]",
                                            (double)motor_positions[0], (double)motor_positions[1], (double)motor_positions[2], 
-                                           (double)motor_positions[3], (double)motor_positions[4], (double)motor_positions[5]);
+                                           (double)motor_positions[3], (double)motor_positions[4], (double)motor_positions[5],
+                                           (double)motor_positions[6], (double)motor_positions[7], (double)motor_positions[8], 
+                                           (double)motor_positions[9], (double)motor_positions[10], (double)motor_positions[11]);
             }
         }
 

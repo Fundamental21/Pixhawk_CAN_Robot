@@ -14,18 +14,19 @@ void CAN_Robot_Rx_Process::init(void)
     }
 }
 
-// 多帧缓存结构体
+// 多帧缓存结构体 - 支持双臂独立控制
 struct CAN2TrajectoryFrameCache {
-    float joints[6];    // 改为float支持4字节位置数据
-    bool received[6];     // 改为6个元素对应6个电机
+    float joints[6];    // 6个关节位置数据
+    bool received[6];   // 6个关节接收标志
     bool is_final;
     uint64_t timestamp_us;
     CAN2TrajectoryFrameCache() : is_final(false), timestamp_us(0) {
         for (int i = 0; i < 6; i++) joints[i] = 0;
-        for (int i = 0; i < 6; i++) received[i] = false;  // 初始化6个元素
+        for (int i = 0; i < 6; i++) received[i] = false;
     }
 };
-static CAN2TrajectoryFrameCache traj_cache[16]; // 最多缓存16个轨迹点
+// 为每条机械臂分别缓存轨迹点（最多16个轨迹点）
+static CAN2TrajectoryFrameCache traj_cache[2][16]; // [arm_id][point_id]
 
 CAN_Robot_Rx_Process::CAN_Robot_Rx_Process() :
     _mit_msg_count(0),
@@ -108,26 +109,43 @@ void CAN_Robot_Rx_Process::process_kegu_motor_message(const CAN_Robot_Rx_Queue::
         return;
     }
     
-    // uint8_t can_channel = msg.can_id; // CAN1=0, CAN2=1
-    KEGU_Motor_Feedback &feedback = _kegu_motors[0][6];
+    // 确定是哪个夹爪 - 支持两个夹爪：索引6(ARM1)和索引13(ARM2)
+    KEGU_Motor_Feedback *feedback_ptr = nullptr;
+    uint8_t gripper_id = 0;  // 0=ARM1, 1=ARM2
+    
+    if (motor_index == 6) {
+        // ARM1夹爪：motor_id=7, 数组索引=6
+        feedback_ptr = &_kegu_motors[0][motor_index];
+        gripper_id = 0;
+    } else if (motor_index == 13) {
+        // ARM2夹爪：motor_id=14, 数组索引=13  
+        feedback_ptr = &_kegu_motors[0][motor_index];
+        gripper_id = 1;
+    } else {
+        // 不是夹爪电机，忽略
+        // GCS_SEND_TEXT(MAV_SEVERITY_DEBUG, "KEGU: Ignoring non-gripper motor index %d", motor_index);
+        return;
+    }
     
     // 添加调试信息：显示接收到的原始消息
-    uint8_t actual_motor_id = (msg.motor_id == 0x07) ? 7 : (motor_index + 1);
-    // GCS_SEND_TEXT(MAV_SEVERITY_DEBUG, "KEGU_MSG_RX: CAN%d CAN_ID=0x%lX Motor_ID=%d index=%d DLC=%d", 
-    //              (int)msg.can_id + 1, (unsigned long)msg.motor_id, actual_motor_id, motor_index, msg.dlc);
+    uint8_t actual_motor_id = (msg.motor_id == 0x07) ? 7 : 
+                              (msg.motor_id == 0x0E) ? 14 : 
+                              (motor_index + 1);
+    // GCS_SEND_TEXT(MAV_SEVERITY_DEBUG, "KEGU_MSG_RX: CAN%d CAN_ID=0x%lX Motor_ID=%d index=%d DLC=%d ARM=%d", 
+    //              (int)msg.can_id + 1, (unsigned long)msg.motor_id, actual_motor_id, motor_index, msg.dlc, gripper_id+1);
     
-    decode_kegu_feedback(msg, feedback);
-    feedback.last_update_us = msg.timestamp_us;
+    decode_kegu_feedback(msg, *feedback_ptr);
+    feedback_ptr->last_update_us = msg.timestamp_us;
     
     _kegu_msg_count++;
     
-    // 记录详细日志（明确显示CAN ID和电机ID的区别）
-    AP::logger().Write_MessageF("KEGU_RX: CAN%d CAN_ID:0x%X Motor_ID:%d(idx%d) Spd:%.1f Curr:%.1f Pos:%d", 
-                               (int)msg.can_id + 1, (unsigned)msg.motor_id, actual_motor_id, motor_index,
-                               feedback.speed, feedback.current, (int)feedback.position);
-    // GCS_SEND_TEXT(MAV_SEVERITY_DEBUG, "KEGU_RX: CAN%d CAN_ID:0x%X Motor_ID:%d(idx%d) Spd:%.1f Curr:%.1f Pos:%d", 
-    //                            (int)msg.can_id + 1, (unsigned)msg.motor_id, actual_motor_id, motor_index,
-    //                            feedback.speed, feedback.current, (int)feedback.position);
+    // 记录详细日志（明确显示CAN ID和电机ID的区别，以及是哪个夹爪）
+    AP::logger().Write_MessageF("ARM%d_KEGU_RX: CAN%d CAN_ID:0x%X Motor_ID:%d(idx%d) Spd:%.1f Curr:%.1f Pos:%d", 
+                               gripper_id+1, (int)msg.can_id + 1, (unsigned)msg.motor_id, actual_motor_id, motor_index,
+                               feedback_ptr->speed, feedback_ptr->current, (int)feedback_ptr->position);
+    // GCS_SEND_TEXT(MAV_SEVERITY_DEBUG, "ARM%d_KEGU_RX: CAN%d CAN_ID:0x%X Motor_ID:%d(idx%d) Spd:%.1f Curr:%.1f Pos:%d", 
+    //                            gripper_id+1, (int)msg.can_id + 1, (unsigned)msg.motor_id, actual_motor_id, motor_index,
+    //                            feedback_ptr->speed, feedback_ptr->current, (int)feedback_ptr->position);
 
 }
 
@@ -151,10 +169,13 @@ void CAN_Robot_Rx_Process::process_robot_command_message(const CAN_Robot_Rx_Queu
         return;
     }
     
-    // 检查是否为KEGU电机控制命令 (CAN2, ID = 0x150)
-    if (msg.can_id == 1 && msg.motor_id == 0x150 && msg.dlc >= 1) {
+    // 检查是否为KEGU电机控制命令 (CAN2, ID = 0x150 ARM1夹爪 或 0x160 ARM2夹爪)
+    if (msg.can_id == 1 && (msg.motor_id == 0x150 || msg.motor_id == 0x160) && msg.dlc >= 1) {
+        // 确定夹爪ID
+        uint8_t gripper_id = (msg.motor_id == 0x150) ? 0 : 1;  // 0x150=ARM1, 0x160=ARM2
+        
         // 处理KEGU电机控制命令
-        process_kegu_control_command(msg);
+        process_kegu_control_command(msg, gripper_id);
         return;
     }
     
@@ -172,12 +193,25 @@ void CAN_Robot_Rx_Process::process_can2_trajectory_command(const CAN_Robot_Rx_Qu
     if (msg.dlc < 8) return; // 数据长度不足
 
     uint8_t point_id = msg.data[0]; // 位置点编号（00, 01, 02...）
-    uint8_t motor_id = msg.data[1]; // 电机编号（00-05对应6个电机）
+    uint8_t can2_motor_id = msg.data[1]; // CAN2协议电机编号（00-11对应12个电机：ARM1[0-5], ARM2[6-11]）
 
-    // 检查电机ID是否有效
-    if (motor_id >= 6) {
-        GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "CAN2_TRAJ: Invalid motor_id %d", motor_id);
+    // 检查CAN2协议电机ID是否有效（支持双臂12个电机）
+    if (can2_motor_id >= 12) {
+        GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "CAN2_TRAJ: Invalid CAN2 motor_id %d (max 11)", can2_motor_id);
         return;
+    }
+    
+    // 确定机械臂ID和关节ID
+    uint8_t arm_id = (can2_motor_id < 6) ? 0 : 1;  // ARM1: 0-5, ARM2: 6-11
+    uint8_t joint_id = can2_motor_id % 6;          // 关节ID: 0-5
+
+    // CAN2协议motor_id转换为实际MIT电机motor_id
+    // CAN2协议: ARM1[0-5] -> MIT电机[1-6], ARM2[6-11] -> MIT电机[8-13]
+    uint8_t actual_motor_id;
+    if (arm_id == 0) {
+        actual_motor_id = can2_motor_id + 1;  // ARM1: 0->1, 1->2, ..., 5->6
+    } else {
+        actual_motor_id = can2_motor_id + 2;  // ARM2: 6->8, 7->9, ..., 11->13
     }
 
     // 解析4字节位置数据（直接接收float格式）
@@ -194,9 +228,9 @@ void CAN_Robot_Rx_Process::process_can2_trajectory_command(const CAN_Robot_Rx_Qu
     
     float position_value = position_union.f;
     
-    // 发送单个电机位置值到地面站
-    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "CAN2_POS: Point%d Motor%d Pos:%.2f Final:%d", 
-                  point_id, motor_id, position_value, (msg.data[7] == 0x01) ? 1 : 0);
+    // 发送单个电机位置值到地面站，包含机械臂信息和实际motor_id
+    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "CAN2_POS: Point%d ARM%d_J%d(MIT_ID%d) Pos:%.2f Final:%d", 
+                  point_id, arm_id+1, joint_id, actual_motor_id, position_value, (msg.data[7] == 0x01) ? 1 : 0);
     
     // 检查是否为最终点（第8字节是01表示最后一个点的最后一帧）
     bool is_final_frame = (msg.data[7] == 0x01);
@@ -204,118 +238,136 @@ void CAN_Robot_Rx_Process::process_can2_trajectory_command(const CAN_Robot_Rx_Qu
     // 添加调试信息显示接收到的原始数据
     #ifdef ARDUPILOT_BUILD
     extern const AP_HAL::HAL& hal;
-    hal.console->printf("CAN2_TRAJ_RX: Point=%d Motor=%d Position=%.2f Final=%d [%02X %02X %02X %02X %02X %02X %02X %02X]\n",
-                       point_id, motor_id, position_value, is_final_frame ? 1 : 0,
+    hal.console->printf("CAN2_TRAJ_RX: Point=%d CAN2_ID=%d MIT_ID=%d Position=%.2f Final=%d [%02X %02X %02X %02X %02X %02X %02X %02X]\n",
+                       point_id, can2_motor_id, actual_motor_id, position_value, is_final_frame ? 1 : 0,
                        msg.data[0], msg.data[1], msg.data[2], msg.data[3], 
                        msg.data[4], msg.data[5], msg.data[6], msg.data[7]);
     #endif
 
-    // 写入缓存（直接存储float值）
-    traj_cache[point_id].joints[motor_id] = position_value;
-    traj_cache[point_id].received[motor_id] = true;
+    // 写入对应机械臂的缓存（直接存储float值）
+    traj_cache[arm_id][point_id].joints[joint_id] = position_value;
+    traj_cache[arm_id][point_id].received[joint_id] = true;
     
     // 如果这是最终帧，标记整个轨迹点为最终点
     if (is_final_frame) {
-        traj_cache[point_id].is_final = true;
+        traj_cache[arm_id][point_id].is_final = true;
     }
     
-    traj_cache[point_id].timestamp_us = msg.timestamp_us;
+    traj_cache[arm_id][point_id].timestamp_us = msg.timestamp_us;
 
-    // 检查是否所有6个电机的数据都收齐了
-    bool all_motors_received = true;
+    // 检查这条机械臂的6个关节数据是否都收齐了
+    bool all_joints_received = true;
     for (uint8_t i = 0; i < 6; i++) {
-        if (!traj_cache[point_id].received[i]) {
-            all_motors_received = false;
+        if (!traj_cache[arm_id][point_id].received[i]) {
+            all_joints_received = false;
             break;
         }
     }
 
-    // 如果6个电机的数据都收齐
-    if (all_motors_received) {
+    // 如果这条机械臂的6个关节数据都收齐了
+    if (all_joints_received) {
         CAN2TrajectoryData trajectory_item;
+        trajectory_item.arm_id = arm_id;  // 设置机械臂ID
         for (int i = 0; i < 6; ++i) {
-            trajectory_item.joint_positions[i] = traj_cache[point_id].joints[i]; // 直接使用float值
+            trajectory_item.joint_positions[i] = traj_cache[arm_id][point_id].joints[i]; // 直接使用float值
         }
-        trajectory_item.is_final_point = traj_cache[point_id].is_final;
-        trajectory_item.timestamp_us = traj_cache[point_id].timestamp_us;
+        trajectory_item.is_final_point = traj_cache[arm_id][point_id].is_final;
+        trajectory_item.timestamp_us = traj_cache[arm_id][point_id].timestamp_us;
         
-        if (trajectory_queue.push(trajectory_item)) {
+        // 推送到对应机械臂的队列
+        extern TrajectoryDataQueue trajectory_queues[2];
+        if (trajectory_queues[arm_id].push(trajectory_item)) {
             
-            // 发送轨迹数据到地面站
-            GCS_SEND_TEXT(MAV_SEVERITY_INFO, "CAN2_TRAJ: Point%d [%.2f,%.2f,%.2f,%.2f,%.2f,%.2f] Final:%d Queue:%d",
-                point_id,
+            // 发送轨迹数据到地面站，明确标识机械臂
+            GCS_SEND_TEXT(MAV_SEVERITY_INFO, "CAN2_TRAJ: ARM%d Point%d [%.2f,%.2f,%.2f,%.2f,%.2f,%.2f] Final:%d Queue:%d",
+                arm_id+1, point_id,
                 trajectory_item.joint_positions[0], trajectory_item.joint_positions[1],
                 trajectory_item.joint_positions[2], trajectory_item.joint_positions[3],
                 trajectory_item.joint_positions[4], trajectory_item.joint_positions[5],
-                trajectory_item.is_final_point ? 1 : 0, trajectory_queue.size());
+                trajectory_item.is_final_point ? 1 : 0, trajectory_queues[arm_id].size());
             
             #ifdef ARDUPILOT_BUILD
             extern const AP_HAL::HAL& hal;
-            hal.console->printf("CAN2 Trajectory Point%d: [%.2f, %.2f, %.2f, %.2f, %.2f, %.2f] Final:%d Queue:%d\n",
-                point_id,
+            hal.console->printf("CAN2 Trajectory ARM%d Point%d: [%.2f, %.2f, %.2f, %.2f, %.2f, %.2f] Final:%d Queue:%d\n",
+                arm_id+1, point_id,
                 trajectory_item.joint_positions[0], trajectory_item.joint_positions[1],
                 trajectory_item.joint_positions[2], trajectory_item.joint_positions[3],
                 trajectory_item.joint_positions[4], trajectory_item.joint_positions[5],
-                trajectory_item.is_final_point ? 1 : 0, trajectory_queue.size());
+                trajectory_item.is_final_point ? 1 : 0, trajectory_queues[arm_id].size());
             #endif
         } else {
-            AP::logger().Write_MessageF("CAN2_TRAJ_WARNING: Queue full, dropping trajectory point %d", point_id);
+            AP::logger().Write_MessageF("CAN2_TRAJ_WARNING: ARM%d Queue full, dropping trajectory point %d", arm_id+1, point_id);
             #ifdef ARDUPILOT_BUILD
             extern const AP_HAL::HAL& hal;
-            hal.console->printf("CAN2 Trajectory WARNING: Queue full, dropping trajectory point %d\n", point_id);
+            hal.console->printf("CAN2 Trajectory WARNING: ARM%d Queue full, dropping trajectory point %d\n", arm_id+1, point_id);
             #endif
         }
         
-        // 清空缓存，准备接收下一个轨迹点
+        // 清空对应机械臂的缓存，准备接收下一个轨迹点
         for (int i = 0; i < 6; i++) {
-            traj_cache[point_id].received[i] = false;
+            traj_cache[arm_id][point_id].received[i] = false;
         }
-        traj_cache[point_id].is_final = false;
+        traj_cache[arm_id][point_id].is_final = false;
     }
     
     last_trajectory_receive_time = AP_HAL::millis();
 }
 
 // 新增：处理KEGU电机控制命令
-void CAN_Robot_Rx_Process::process_kegu_control_command(const CAN_Robot_Rx_Queue::CANRxMessage &msg)
+void CAN_Robot_Rx_Process::process_kegu_control_command(const CAN_Robot_Rx_Queue::CANRxMessage &msg, uint8_t gripper_id)
 {
     if (msg.dlc < 1) return; // 数据长度不足
+    if (gripper_id >= 2) return; // 无效的夹爪ID
     
     uint8_t command = msg.data[0];
     
     // 记录接收到的命令
-    AP::logger().Write_MessageF("KEGU_CMD: CAN%d ID:0x%X CMD:0x%02X DLC:%d", 
-                               (int)msg.can_id + 1, (unsigned)msg.motor_id, command, msg.dlc);
+    AP::logger().Write_MessageF("ARM%d_KEGU_CMD: CAN%d ID:0x%X CMD:0x%02X DLC:%d", 
+                               gripper_id+1, (int)msg.can_id + 1, (unsigned)msg.motor_id, command, msg.dlc);
     
-    // GCS_SEND_TEXT(MAV_SEVERITY_INFO, "KEGU Command received: 0x%02X", command);
+    // GCS_SEND_TEXT(MAV_SEVERITY_INFO, "ARM%d KEGU Command received: 0x%02X", gripper_id+1, command);
     
-    // 设置全局标志，让robot_arm_control_loop处理
-    extern uint8_t kegu_external_command;
-    extern bool kegu_external_command_received;
-    extern uint32_t kegu_command_timestamp;
+    // 设置双夹爪全局标志，让robot_arm_control_loop处理
+    extern uint8_t kegu_external_commands[2];
+    extern bool kegu_external_commands_received[2];
+    extern uint32_t kegu_command_timestamps[2];
     
-    kegu_external_command = command;
-    kegu_external_command_received = true;
-    kegu_command_timestamp = AP_HAL::millis();
+    kegu_external_commands[gripper_id] = command;
+    kegu_external_commands_received[gripper_id] = true;
+    kegu_command_timestamps[gripper_id] = AP_HAL::millis();
+    
+    // 向后兼容：如果是ARM1夹爪，同时设置原有的全局变量
+    if (gripper_id == 0) {
+        extern uint8_t kegu_external_command;
+        extern bool kegu_external_command_received;
+        extern uint32_t kegu_command_timestamp;
+        
+        kegu_external_command = command;
+        kegu_external_command_received = true;
+        kegu_command_timestamp = AP_HAL::millis();
+    }
     
     #ifdef ARDUPILOT_BUILD
     extern const AP_HAL::HAL& hal;
-    hal.console->printf("KEGU Control Command: 0x%02X received\n", command);
+    hal.console->printf("ARM%d KEGU Control Command: 0x%02X received\n", gripper_id+1, command);
     #endif
 }
 
 bool CAN_Robot_Rx_Process::is_mit_motor_id(uint32_t motor_id) const
 {
-    // MIT电机使用Motor ID 0x01-0x06 (1-6)
-    return (motor_id >= 0x01 && motor_id <= 0x06);
+    // MIT电机使用Motor ID:
+    // ARM1: 0x01-0x06 (1-6) 
+    // ARM2: 0x08-0x0D (8-13)
+    return ((motor_id >= 0x01 && motor_id <= 0x06) || 
+            (motor_id >= 0x08 && motor_id <= 0x0D));
 }
 
 bool CAN_Robot_Rx_Process::is_kegu_motor_id(uint32_t motor_id) const
 {
     // KEGU电机使用特定的ID模式
     uint16_t high_part = (motor_id >> 8) & 0xFF;
-    // 夹爪电机ID=7也是KEGU类型，用于自动上报数据
-    return (high_part == 0x02 || high_part == 0x03 || motor_id == 0x07);
+    // 夹爪电机ID=7和ID=14都是KEGU类型，用于自动上报数据
+    return (high_part == 0x02 || high_part == 0x03 || motor_id == 0x07 || motor_id == 0x0E);
 }
 
 uint8_t CAN_Robot_Rx_Process::extract_motor_id(uint32_t motor_id) const
@@ -326,9 +378,9 @@ uint8_t CAN_Robot_Rx_Process::extract_motor_id(uint32_t motor_id) const
         if (high_part == 0x02 || high_part == 0x03) {
             uint8_t extracted_id = motor_id & 0xFF;  // CAN ID格式：0x2XY或0x3XY，电机ID在低字节
             
-            // 验证提取的ID是否在有效范围内（1-7为有效电机ID）
-            if (extracted_id >= 1 && extracted_id <= 7) {
-                return extracted_id - 1;  // 转换为0-based数组索引（0-6）
+            // 验证提取的ID是否在有效范围内（1-14为有效电机ID）
+            if (extracted_id >= 1 && extracted_id <= 14) {
+                return extracted_id - 1;  // 转换为0-based数组索引（0-13）
             } else {
                 // 无效的电机ID，记录错误并返回默认值
                 // GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "KEGU Invalid Motor ID: 0x%lX extracted_id=%d", 
@@ -336,8 +388,11 @@ uint8_t CAN_Robot_Rx_Process::extract_motor_id(uint32_t motor_id) const
                 return 0;  // 返回默认索引0
             }
         } else if (motor_id == 0x07) {
-            // 特殊情况：电机ID=7映射到数组索引6
+            // 特殊情况：ARM1夹爪，电机ID=7映射到数组索引6
             return 6;  // 0-based索引：电机ID7 -> 索引6
+        } else if (motor_id == 0x0E) {
+            // 特殊情况：ARM2夹爪，电机ID=14映射到数组索引13
+            return 13;  // 0-based索引：电机ID14 -> 索引13
         }
     }
     // MIT电机：motor_id就是电机ID，需要转换为0-based索引

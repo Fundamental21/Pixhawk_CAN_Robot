@@ -24,6 +24,7 @@
 // Libraries
 #include "MIT_Motor.h"
 #include <CAN_Robot_interpolation/TrajectoryInterpolator.h>
+#include <CAN_Robot_Rx/CAN_Robot_Rx_Process.h>
 #include <AP_Common/AP_Common.h>
 #include <AP_HAL/AP_HAL.h>
 #include <AP_BattMonitor/AP_BattMonitor.h>          // Battery monitor library
@@ -76,6 +77,12 @@
 #include "RC_Channel.h"                  // RC Channel Library
 
 #include "mode.h"
+
+// Robot arm constants - 双臂配置（在类定义之前定义）
+#define ARM_COUNT 2                    // 机械臂数量
+#define JOINT_MOTOR_COUNT 6           // 每个臂的关节电机数量
+#define TOTAL_JOINT_MOTORS (ARM_COUNT * JOINT_MOTOR_COUNT)  // 总关节电机数
+#define GRIPPER_COUNT 2               // 夹爪数量
 
 class Rover : public AP_Vehicle {
 public:
@@ -138,19 +145,23 @@ private:
     uint16_t debug_counter;
     
     // Motor status arrays for efficient CAN RX data storage
-    float motor_positions[6];     // Current motor positions
-    float motor_velocities[6];    // Current motor velocities  
-    float motor_currents[6];      // Current motor currents
+    float motor_positions[TOTAL_JOINT_MOTORS];     // Current motor positions
+    float motor_velocities[TOTAL_JOINT_MOTORS];    // Current motor velocities  
+    float motor_currents[TOTAL_JOINT_MOTORS];      // Current motor currents
     
     // Gripper motor status variables
-    float gripper_position;       // Current gripper position
-    float gripper_velocity;       // Current gripper velocity
-    float gripper_current;        // Current gripper current (mA)
+    float gripper_positions[GRIPPER_COUNT];       // Current gripper positions
+    float gripper_velocities[GRIPPER_COUNT];       // Current gripper velocities
+    float gripper_currents[GRIPPER_COUNT];        // Current gripper currents
+    
+    // 向后兼容的单臂变量（指向ARM1的夹爪）
+    float& gripper_position;       // 引用gripper_positions[0]
+    float& gripper_velocity;       // 引用gripper_velocities[0]  
+    float& gripper_current;        // 引用gripper_currents[0]
     
     // Trajectory interpolation for smooth robot arm motion
-    TrajectoryInterpolator arm_interpolator;
-    float prev_interpolated_pos[6];     // 前一次插值位置，用于计算速度
-    float interpolated_velocities[6];   // 计算得到的插值速度
+    float prev_interpolated_pos[ARM_COUNT][JOINT_MOTOR_COUNT];     // 前一次插值位置，用于计算速度
+    float interpolated_velocities[ARM_COUNT][JOINT_MOTOR_COUNT];   // 计算得到的插值速度
     
     // Robot arm objects
     RobotArmConfig left_arm_config;
@@ -169,8 +180,8 @@ private:
     
     // 电机控制函数现在在 MIT_Motor 命名空间中定义
     
-    // Robot arm initialization and control tasks
-    void robot_arm_init();
+    // Robot arm initialization and control tasks  
+    // 注意：robot_arm_init() 现在在public部分声明，避免重复
     void kegu_motor_init();        // KEGU电机专用初始化函数
     void robot_arm_fast_loop();    // 500Hz task
     void robot_arm_control_loop(); // 100Hz task  
@@ -522,6 +533,21 @@ public:
 
     // Simple mode
     float simple_sin_yaw;
+
+    // 双机械臂电机配置
+    // ARM1: CAN0, Motors 1-6 + Gripper (Motor 7)
+    // ARM2: CAN0, Motors 8-13 + Gripper (Motor 14)
+
+    // Robot arm control functions - 扩展为双臂
+    void robot_arm_init();
+    void dual_arm_init();                    // 双臂初始化
+    // 注意：kegu_motor_init() 已在上面第184行声明，避免重复
+    void process_arm_trajectory(uint8_t arm_id, const CAN2TrajectoryData& trajectory_data);
+
+    // 双臂控制函数
+    void control_arm_motors(uint8_t arm_id);
+    void update_arm_status(uint8_t arm_id);
+    void process_arm_interpolation(uint8_t arm_id);
 };
 
 // External functions for Tihu motor control are now defined in MIT_Motor.h

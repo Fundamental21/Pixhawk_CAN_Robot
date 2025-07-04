@@ -37,8 +37,8 @@ extern void mit_motor_task (void const* argu);
 // C++ namespace functions
 #ifdef __cplusplus
 namespace MIT_Motor {
-    // Initialization functions
-    void init_motor_instances();
+    // 注意：核心函数声明现在统一在 CAN_Robot_Common.h 中定义
+    // 这里只保留不在CAN_Robot_Common.h中的辅助函数
     
     // Utility functions
     float normalize_angle(float angle);
@@ -51,12 +51,6 @@ namespace MIT_Motor {
     // Trapezoid planner functions
     void trapezoid_init(TrapezoidPlanner* planner, float initial_pos, float target_pos);
     void trapezoid_update(TrapezoidPlanner* planner, bool is_last_point);
-    
-    // Motor control functions
-    void MotorControl_Handler(MotorInstance* motor);
-    float get_motor_position(uint8_t can_id, uint8_t motor_id);
-    float get_motor_current(uint8_t can_id, uint8_t motor_id);
-    float get_motor_velocity(uint8_t can_id, uint8_t motor_id);
     
     // Trajectory interpolation functions
     void init_trajectory_interpolation();
@@ -72,17 +66,19 @@ namespace MIT_Motor {
     bool get_next_sparse_point(float joint_angles[6]);
     bool add_dense_point(const float joint_angles[6]);
     
-    // Gripper motor control functions
-    void set_gripper_current(float current_value);
-    void set_gripper_velocity(float velocity_value);
-    float get_gripper_position();
-    float get_gripper_velocity();
-    float get_gripper_current();
+    // 注意：夹爪控制函数现在统一在 CAN_Robot_Common.h 中声明
     
     // Convenient gripper control functions  
     void gripper_open(float speed_percentage);
     void gripper_close(float speed_percentage);
     void gripper_stop();
+    
+    // 双夹爪智能控制函数
+    void process_dual_gripper_control();
+    
+    // 双夹爪控制函数（支持gripper_id参数）
+    void set_gripper_current_by_id(uint8_t gripper_id, float current_value);
+    void set_gripper_velocity_by_id(uint8_t gripper_id, float velocity_value);
 }
 #endif
 

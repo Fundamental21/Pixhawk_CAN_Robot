@@ -1,6 +1,7 @@
 #pragma once
 #include <AP_Common/AP_Common.h>
 #include <AP_HAL/AP_HAL.h>
+#include <AP_HAL/Semaphores.h>
 #include <AP_Logger/AP_Logger.h>
 #include "CAN_Robot_Common.h"
 
@@ -42,7 +43,7 @@ public:
 
 private:
     static CAN_Robot_Tx_Queue *_singleton;
-    static const uint32_t QUEUE_SIZE = 100;
+    static const uint32_t QUEUE_SIZE = 200;  // 扩展到200以适配双臂高负载
     
     // 私有构造函数 - 防止外部直接创建实例
     CAN_Robot_Tx_Queue();
@@ -69,7 +70,6 @@ private:
 };
 
 // Helper functions for motor control (to be called from MIT_Motor.cpp)
-void handle_mit_motor(MotorInstance* motor);
-void handle_kegu_motor(MotorInstance* motor);
+// 注意：helper函数现在统一在 CAN_Robot_Common.h 中声明
 
 // Motor instance structure now defined in MIT_Motor.h 

@@ -363,11 +363,11 @@ void CanardInterface::processRxFromInterface(uint8_t iface_idx) {
                 hall_backend->handle_frame(rxmsg);  // handle rxmsg from specific CAN interface
             }
 
-            // Push CAN message to robot rx queue - 明确标识CAN接口
+            // Push CAN message to robot rx queue - 双臂机器人CAN消息接收
             CAN_Robot_Rx_Queue* rx_queue = CAN_Robot_Rx_Queue::get_singleton();
             if (rx_queue != nullptr) {
                 CAN_Robot_Rx_Queue::CANRxMessage msg;   // 队列专用格式
-                msg.motor_id = rxmsg.id;        // MIT电机ID (CAN消息ID对应motor_id)
+                msg.motor_id = rxmsg.id;        // 电机ID (ARM1: 1-7, ARM2: 8-14)
                 msg.can_id = iface_idx;         // CAN总线ID：0=CAN1, 1=CAN2
                 msg.dlc = AP_HAL::CANFrame::dlcToDataLength(rxmsg.dlc);  // 数据长度
                 memcpy(msg.data, rxmsg.data, msg.dlc);  // 数据

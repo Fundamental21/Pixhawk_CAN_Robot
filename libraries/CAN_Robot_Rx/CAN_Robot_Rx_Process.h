@@ -7,13 +7,14 @@
 #include "../CAN_Robot_Tx/CAN_Robot_Common.h"
 #include "CAN_Robot_Rx_Queue.h"
 
-// CAN2轨迹数据结构
+// CAN2轨迹数据结构 - 支持双臂独立控制
 struct CAN2TrajectoryData {
+    uint8_t arm_id;            // 机械臂ID (0=ARM1, 1=ARM2)
     float joint_positions[6];  // 6个关节位置 (度)
     bool is_final_point;       // 是否为最终停止点
     uint64_t timestamp_us;     // 接收时间戳
     
-    CAN2TrajectoryData() : is_final_point(false), timestamp_us(0) {
+    CAN2TrajectoryData() : arm_id(0), is_final_point(false), timestamp_us(0) {
         for (int i = 0; i < 6; i++) {
             joint_positions[i] = 0.0f;
         }
@@ -27,7 +28,7 @@ extern uint32_t last_trajectory_receive_time;
 
 // 轨迹数据队列结构
 struct TrajectoryDataQueue {
-    static const uint8_t MAX_QUEUE_SIZE = 100;  // 最大队列大小
+    static const uint8_t MAX_QUEUE_SIZE = 200;  // 扩展到200以支持双臂复杂轨迹
     
     CAN2TrajectoryData data[MAX_QUEUE_SIZE];
     uint8_t head;    // 读取位置
@@ -43,8 +44,8 @@ struct TrajectoryDataQueue {
     uint8_t size() const { return count; }
 };
 
-// 全局轨迹数据队列 (在Rover.cpp中定义)
-extern TrajectoryDataQueue trajectory_queue;
+// 双臂独立的轨迹数据队列 (在Rover.cpp中定义)
+extern TrajectoryDataQueue trajectory_queues[2];  // [0]=ARM1, [1]=ARM2
 
 // 专门处理机器人CAN消息的处理器
 class CAN_Robot_Rx_Process {
@@ -60,7 +61,7 @@ public:
     void process_kegu_motor_message(const CAN_Robot_Rx_Queue::CANRxMessage &msg);
     void process_robot_command_message(const CAN_Robot_Rx_Queue::CANRxMessage &msg);
     void process_can2_trajectory_command(const CAN_Robot_Rx_Queue::CANRxMessage &msg);
-    void process_kegu_control_command(const CAN_Robot_Rx_Queue::CANRxMessage &msg);
+    void process_kegu_control_command(const CAN_Robot_Rx_Queue::CANRxMessage &msg, uint8_t gripper_id);
     
     // MIT电机状态结构
     struct MIT_Motor_Feedback {

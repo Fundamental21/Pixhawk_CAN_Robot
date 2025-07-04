@@ -163,18 +163,61 @@ const AP_Scheduler::Task Rover::scheduler_tasks[] = {
 // 使用MIT_Motor.cpp中已正确初始化的全局motor_instances数组
 extern MotorInstance motor_instances[MAX_CAN_NUM][MOTORS_PER_CAN];
 
-// 确保joint_motor_list指向正确初始化的电机实例
-static MotorInstance* joint_motor_list[JOINT_MOTOR_COUNT] = {
-    &motor_instances[0][0],  // CAN总线1, 电机1 (can_id=0, motor_id=1)
-    &motor_instances[0][1],  // CAN总线1, 电机2 (can_id=0, motor_id=2)  
-    &motor_instances[0][2],  // CAN总线1, 电机3 (can_id=0, motor_id=3)
-    &motor_instances[0][3],  // CAN总线1, 电机4 (can_id=0, motor_id=4)
-    &motor_instances[0][4],  // CAN总线1, 电机5 (can_id=0, motor_id=5)
-    &motor_instances[0][5]   // CAN总线1, 电机6 (can_id=0, motor_id=6)
+// 双机械臂电机实例配置
+// ARM1: CAN0, Motors 1-6 + Gripper (Motor 7)  
+// ARM2: CAN0, Motors 8-13 + Gripper (Motor 14)
+// 数组索引映射: motor_instances[can_id][array_index].motor_id
+// ARM1关节: [0][0-5].motor_id = 1-6
+// ARM1夹爪: [0][6].motor_id = 7  
+// ARM2关节: [0][7-12].motor_id = 8-13
+// ARM2夹爪: [0][13].motor_id = 14
+MotorInstance* arm_motor_list[ARM_COUNT][JOINT_MOTOR_COUNT] = {
+    // ARM 1 (关节电机1-6)
+    {
+        &motor_instances[0][0],  // CAN0, 数组索引0, motor_id=1
+        &motor_instances[0][1],  // CAN0, 数组索引1, motor_id=2  
+        &motor_instances[0][2],  // CAN0, 数组索引2, motor_id=3
+        &motor_instances[0][3],  // CAN0, 数组索引3, motor_id=4
+        &motor_instances[0][4],  // CAN0, 数组索引4, motor_id=5
+        &motor_instances[0][5]   // CAN0, 数组索引5, motor_id=6
+    },
+    // ARM 2 (关节电机8-13)
+    {
+        &motor_instances[0][7],  // CAN0, 数组索引7, motor_id=8
+        &motor_instances[0][8],  // CAN0, 数组索引8, motor_id=9
+        &motor_instances[0][9],  // CAN0, 数组索引9, motor_id=10
+        &motor_instances[0][10], // CAN0, 数组索引10, motor_id=11
+        &motor_instances[0][11], // CAN0, 数组索引11, motor_id=12
+        &motor_instances[0][12]  // CAN0, 数组索引12, motor_id=13
+    }
 };
 
-// 添加夹爪电机实例
-static MotorInstance* gripper_motor = &motor_instances[0][6];  // CAN总线1, 电机7 (can_id=0, motor_id=7)
+// 双夹爪电机实例（改为全局变量）
+MotorInstance* gripper_motors[GRIPPER_COUNT] = {
+    &motor_instances[0][6],   // ARM1夹爪: CAN0, 数组索引6, motor_id=7
+    &motor_instances[0][13]   // ARM2夹爪: CAN0, 数组索引13, motor_id=14
+};
+
+// 双臂控制状态变量（改为全局变量）
+bool arms_initialized[ARM_COUNT] = {false, false};
+bool grippers_initialized[GRIPPER_COUNT] = {false, false};
+
+// 双臂轨迹插值器
+TrajectoryInterpolator arm_interpolators[ARM_COUNT];
+
+// 保持向后兼容的全局变量（指向ARM1）
+MotorInstance** joint_motor_list = arm_motor_list[0];
+MotorInstance* gripper_motor = gripper_motors[0];
+
+// 新增：双夹爪外部控制命令全局变量
+uint8_t kegu_external_commands[2] = {0, 0};        // 外部CAN命令 [0]=ARM1, [1]=ARM2
+bool kegu_external_commands_received[2] = {false, false}; // 命令接收标志 [0]=ARM1, [1]=ARM2  
+uint32_t kegu_command_timestamps[2] = {0, 0};      // 命令时间戳 [0]=ARM1, [1]=ARM2
+
+// 新增：双夹爪状态数组的全局定义（与Rover类中的成员变量对应）
+float gripper_positions[2] = {0.0f, 0.0f};       // 全局夹爪位置数组
+float gripper_velocities[2] = {0.0f, 0.0f};      // 全局夹爪速度数组  
+float gripper_currents[2] = {0.0f, 0.0f};        // 全局夹爪电流数组
 
 // Robot arm initialization - called once during startup
 void Rover::robot_arm_init()
@@ -238,439 +281,173 @@ CAN2TrajectoryData latest_trajectory_data;
 bool trajectory_data_received = false;
 uint32_t last_trajectory_receive_time = 0;
 
-// 全局轨迹数据队列
-TrajectoryDataQueue trajectory_queue;
+// 双臂独立的轨迹数据队列
+TrajectoryDataQueue trajectory_queues[2];  // [0]=ARM1, [1]=ARM2
 
 // KEGU夹爪电机控制变量 (定义在函数外面)
 bool kegu_control_enabled = false;        // 不使用static，允许外部访问
 float kegu_target_current = 0.0f;         // 不使用static，允许外部访问
 
 // KEGU外部控制命令全局变量
-uint8_t kegu_external_command = 0;        // 外部CAN命令
-bool kegu_external_command_received = false; // 命令接收标志
-uint32_t kegu_command_timestamp = 0;      // 命令时间戳
+uint8_t kegu_external_command = 0;        // 外部CAN命令 (ARM1夹爪，向后兼容)
+bool kegu_external_command_received = false; // 命令接收标志 (ARM1夹爪，向后兼容)
+uint32_t kegu_command_timestamp = 0;      // 命令时间戳 (ARM1夹爪，向后兼容)
+
+
 
 void Rover::robot_arm_control_loop()
 {
-    // Initialize CAN Rx modules if not already done
+    // === 1. 初始化阶段 ===
     static bool rx_initialized = false;
+    static bool tx_initialized = false;
+    
     if (!rx_initialized) {
-        // 初始化接收队列和处理器
         CAN_Robot_Rx_Queue::init();
         CAN_Robot_Rx_Process::init();
         rx_initialized = true;
     }
-
-        // Process all messages from the queue using Rx processor
+    
+    if (!tx_initialized) {
+        CAN_Robot_Tx_Queue::init();
+        CAN_Robot_Tx_Process::init();
+        tx_initialized = true;
+    }
+    
+    // === 2. CAN消息处理 ===
     CAN_Robot_Rx_Process* rx_processor = CAN_Robot_Rx_Process::get_singleton();
     if (rx_processor != nullptr) {
         rx_processor->process_all_rx_messages();
     }
-
-        // Initialize CAN Tx module if not already done
-    static bool tx_initialized = false;
-    if (!tx_initialized) {
-        // 初始化发送队列和处理器 - 在主控制循环中初始化，负责发送电机控制指令
-        CAN_Robot_Tx_Queue::init();
-        CAN_Robot_Tx_Process::init();
-        
-        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
-            MotorInstance* m = joint_motor_list[i];
-            m->target_value = m->last_position;
-        }
-        
-        tx_initialized = true;
-    }
-
-    if (!arm_initialized) {
-    robot_arm_init();
-    return;
-    }
-
-    if (!gripper_initialized) {
-        kegu_motor_init();
-        // 添加夹爪初始化调试信息
-        if (gripper_initialized) {
-            AP::logger().Write_MessageF("GRIPPER_INIT: KEGU gripper motor initialized");
-            GCS_SEND_TEXT(MAV_SEVERITY_INFO, "KEGU Gripper: Initialization started");
-        }
-        return;
-    }
     
-
-    
-    // 获取并更新电机状态数据 - 使用类成员变量，高效无重复声明
-    for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
-        MotorInstance* m = joint_motor_list[i];
+    // === 3. 双臂系统初始化 ===
+    static bool dual_arm_init_complete = false;
+    if (!dual_arm_init_complete) {
+        dual_arm_init();
         
-        // 为每个电机分别获取状态数据，存储到成员变量数组中
-        motor_positions[i] = MIT_Motor::get_motor_position(m->can_id, m->motor_id);
-        motor_velocities[i] = MIT_Motor::get_motor_velocity(m->can_id, m->motor_id);
-        motor_currents[i] = MIT_Motor::get_motor_current(m->can_id, m->motor_id);
-        
-        // 只要不是NaN就更新位置值（包括0.0也是有效值）
-        if (!isnan(motor_positions[i])) {
-            m->last_position = motor_positions[i];
-        }
-    }
-    
-
-
-
-
-    // 获取夹爪电机状态数据 - 夹爪电机会自动上报数据
-    gripper_position = MIT_Motor::get_gripper_position();
-    gripper_velocity = MIT_Motor::get_gripper_velocity();
-    gripper_current = MIT_Motor::get_gripper_current();
-    
-    // 使用日志记录方法打印KEGU电机电流 - 每100ms打印一次
-    static uint32_t last_current_print_ms = 0;
-    uint32_t current_print_now_ms = AP_HAL::millis();
-    if (current_print_now_ms - last_current_print_ms >= 100) {  // 每100ms打印一次电流值
-        // 使用AP::logger()方法记录电流到日志
-        AP::logger().Write_MessageF("KEGU_CURRENT: %.2fmA", gripper_current);
-        
-        // 同时使用GCS发送文本消息
-        GCS_SEND_TEXT(MAV_SEVERITY_DEBUG, "KEGU Current: %.2fmA", gripper_current);
-        
-        last_current_print_ms = current_print_now_ms;
-    }
-
-    // KEGU电机速度控制 - 初始化完成后切换到速度控制模式
-    static bool kegu_mode_switched = false;
-    static bool first_velocity_set = false;
-    static float current_target_velocity = 0.0f;
-    
-    if (!kegu_mode_switched && gripper_motor->mode == CTRL_MODE_INIT) {
-        // 初始化完成，切换到速度控制模式
-        gripper_motor->mode = CTRL_MODE_VELOCITY;
-        kegu_mode_switched = true;
-        
-        #ifdef ARDUPILOT_BUILD
-        hal.console->printf("KEGU: Switched to velocity control mode\n");
-        #endif
-        
-        // 添加模式切换调试信息
-        AP::logger().Write_MessageF("KEGU_MODE: Switched from INIT to VELOCITY control");
-        GCS_SEND_TEXT(MAV_SEVERITY_INFO, "KEGU Gripper: Ready for velocity control");
-    }
-    
-    if (kegu_mode_switched) {
-        // 检查是否有外部命令正在处理
-        bool external_command_active = kegu_external_command_received;
-        
-        if (!external_command_active) {
-            // 只有在没有外部命令时才执行默认的自动控制逻辑
-            // 第一次循环控制时设置速度为1000
-            if (!first_velocity_set) {
-                current_target_velocity = 0.0f;
-                first_velocity_set = true;
-                
-                #ifdef ARDUPILOT_BUILD
-                hal.console->printf("KEGU: First velocity set to %.1f\n", current_target_velocity);
-                #endif
-                
-                GCS_SEND_TEXT(MAV_SEVERITY_INFO, "KEGU: Initial velocity set to 1000");
+        // 检查是否所有臂都已初始化
+        bool all_arms_ready = true;
+        for (uint8_t i = 0; i < ARM_COUNT; i++) {
+            if (!arms_initialized[i]) {
+                all_arms_ready = false;
+                break;
             }
-            // 监控电流，当电流>200mA后设置速度为0
-            if (fabsf(gripper_current) > 200.0f) {
-                current_target_velocity = 0.0f;
-                
-                // 记录电流超阈值事件到日志
-                AP::logger().Write_MessageF("KEGU: Current %.1fmA > 200mA threshold, stopping motor", gripper_current);
-                
-                #ifdef ARDUPILOT_BUILD
-                hal.console->printf("KEGU: Current %.1fmA > 200mA threshold, stopping motor\n", gripper_current);
-                #endif
-                
-                GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "KEGU: High current detected, motor stopped");
-            }
-            
-            // 设置目标速度
-            gripper_motor->target_value = current_target_velocity;
-            MIT_Motor::set_gripper_velocity(current_target_velocity);
         }
         
-        #ifdef ARDUPILOT_BUILD
-        static uint32_t last_debug_ms = 0;
-        uint32_t debug_now_ms = AP_HAL::millis();
-        if (debug_now_ms - last_debug_ms >= 1000) {  // 每秒打印一次调试信息
-            hal.console->printf("KEGU: Velocity control - Target: %.1f, Current: %.1fmA, Velocity: %.1f, ExtCmd: %s\n", 
-                               current_target_velocity, gripper_current, gripper_velocity,
-                               external_command_active ? "ACTIVE" : "INACTIVE");
-            
-            // 定期记录夹爪状态到日志
-            #if HAL_LOGGING_ENABLED
-            AP::logger().Write_MessageF("KEGU_STATUS: Target:%.1f Current:%.1fmA Velocity:%.1f ExtCmd:%s", 
-                                       current_target_velocity, gripper_current, gripper_velocity,
-                                       external_command_active ? "ACTIVE" : "INACTIVE");
-            #endif
-            
-            last_debug_ms = debug_now_ms;
-        }
-        #endif
-    }
-    
-    // 处理外部KEGU控制命令
-    static uint8_t last_processed_command = 0xFF;  // 跟踪最后处理的命令
-    static bool command_in_progress = false;       // 跟踪命令执行状态
-    
-    if (kegu_external_command_received && kegu_mode_switched) {
-        uint32_t current_time_ms = AP_HAL::millis();
-        
-        // 检查命令是否超时（5秒）
-        if (current_time_ms - kegu_command_timestamp > 5000) {
-            kegu_external_command_received = false;
-            command_in_progress = false;
-            last_processed_command = 0xFF;
-            GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "KEGU: External command timeout");
+        if (all_arms_ready) {
+            dual_arm_init_complete = true;
+            AP::logger().Write_MessageF("DUAL_ARM: All %d arms initialized successfully", ARM_COUNT);
+            GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Dual-arm system ready");
         } else {
-            // 检查是否是新命令
-            bool is_new_command = (kegu_external_command != last_processed_command);
-            if (is_new_command) {
-                command_in_progress = false;  // 重置状态以处理新命令
-                last_processed_command = kegu_external_command;
-            }
-            
-            // 处理有效的外部命令
-            switch (kegu_external_command) {
-                case 0x00: {
-                    // 停止命令
-                    current_target_velocity = 0.0f;
-                    gripper_motor->target_value = 0.0f;
-                    MIT_Motor::set_gripper_velocity(0.0f);
-                    
-                    AP::logger().Write_MessageF("KEGU_EXT_CMD: STOP command executed");
-                    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "KEGU: STOP command executed");
-                    
-                    kegu_external_command_received = false; // 命令处理完成
-                    command_in_progress = false;
-                    break;
-                }
-                
-                case 0x01: {
-                    // 反转命令 - 设置负速度，包含电流检测
-                    if (!command_in_progress) {
-                        current_target_velocity = -2000.0f; // 反向速度
-                        gripper_motor->target_value = current_target_velocity;
-                        MIT_Motor::set_gripper_velocity(current_target_velocity);
-                        command_in_progress = true;
-                        
-                        AP::logger().Write_MessageF("KEGU_EXT_CMD: REVERSE command started");
-                        GCS_SEND_TEXT(MAV_SEVERITY_INFO, "KEGU: REVERSE command started");
-                    }
-                    
-                    // 监控电流，当电流>200mA后停止
-                    if (fabsf(gripper_current) > 200.0f) {
-                        current_target_velocity = 0.0f;
-                        gripper_motor->target_value = 0.0f;
-                        MIT_Motor::set_gripper_velocity(0.0f);
-                        
-                        AP::logger().Write_MessageF("KEGU_EXT_CMD: REVERSE stopped - current %.1fmA > 200mA", gripper_current);
-                        GCS_SEND_TEXT(MAV_SEVERITY_INFO, "KEGU: REVERSE stopped - high current");
-                        
-                        command_in_progress = false;
-                        kegu_external_command_received = false; // 命令处理完成
-                    }
-                    break;
-                }
-                
-                case 0x11: {
-                    // 正转命令 - 设置正速度，包含电流检测
-                    if (!command_in_progress) {
-                        current_target_velocity = 2000.0f; // 正向速度
-                        gripper_motor->target_value = current_target_velocity;
-                        MIT_Motor::set_gripper_velocity(current_target_velocity);
-                        command_in_progress = true;
-                        
-                        AP::logger().Write_MessageF("KEGU_EXT_CMD: FORWARD command started");
-                        GCS_SEND_TEXT(MAV_SEVERITY_INFO, "KEGU: FORWARD command started");
-                    }
-                    
-                    // 监控电流，当电流>200mA后停止
-                    if (fabsf(gripper_current) > 200.0f) {
-                        current_target_velocity = 0.0f;
-                        gripper_motor->target_value = 0.0f;
-                        MIT_Motor::set_gripper_velocity(0.0f);
-                        
-                        AP::logger().Write_MessageF("KEGU_EXT_CMD: FORWARD stopped - current %.1fmA > 200mA", gripper_current);
-                        GCS_SEND_TEXT(MAV_SEVERITY_INFO, "KEGU: FORWARD stopped - high current");
-                        
-                        command_in_progress = false;
-                        kegu_external_command_received = false; // 命令处理完成
-                    }
-                    break;
-                }
-                
-                default: {
-                    // 未知命令
-                    AP::logger().Write_MessageF("KEGU_EXT_CMD: Unknown command 0x%02X", kegu_external_command);
-                    GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "KEGU: Unknown command 0x%02X", kegu_external_command);
-                    kegu_external_command_received = false; // 命令处理完成
-                    command_in_progress = false;
-                    break;
-                }
-            }
+            return; // 等待初始化完成
         }
     }
-
-
-    // Initialize trajectory interpolator separately
-    static bool interpolator_initialized = false;
-    if (!interpolator_initialized) {
-        // 第一步：必须先获得所有电机的有效当前位置，否则不进行插值器初始化
-        float current_positions[JOINT_MOTOR_COUNT];
-        bool all_positions_valid = true;
+    
+    // === 4. KEGU夹爪初始化命令发送 ===
+    static bool kegu_init_complete = false;
+    static uint32_t kegu_init_start_time = 0;
+    static bool kegu_init_sent[GRIPPER_COUNT] = {false, false}; // 跟踪每个夹爪是否已发送初始化命令
+    
+    if (dual_arm_init_complete && !kegu_init_complete) {
+        uint32_t now_ms = AP_HAL::millis();
         
-        #ifdef ARDUPILOT_BUILD
-        hal.console->printf("Checking motor positions for interpolator initialization...\n");
-        #endif
+        // 首次进入，记录开始时间
+        if (kegu_init_start_time == 0) {
+            kegu_init_start_time = now_ms;
+            AP::logger().Write_MessageF("KEGU_INIT: Starting gripper initialization sequence");
+        }
         
-        // 获取所有电机的当前位置
-        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
-            MotorInstance* m = joint_motor_list[i];
-            current_positions[i] = MIT_Motor::get_motor_position(m->can_id, m->motor_id);
-            
-            // 检查获取到的位置是否有效（不是NaN且在合理范围内）
-            if (isnan(current_positions[i]) || fabsf(current_positions[i]) > 720.0f) {
-                all_positions_valid = false;
-                #ifdef ARDUPILOT_BUILD
-                hal.console->printf("Motor %d position invalid: %.2f, waiting for valid data...\n", 
-                                   i+1, current_positions[i]);
-                #endif
-                break;
+        // 为每个夹爪发送初始化命令（只发送一次）
+        for (uint8_t gripper_id = 0; gripper_id < GRIPPER_COUNT; gripper_id++) {
+            if (!grippers_initialized[gripper_id] || kegu_init_sent[gripper_id]) {
+                continue; // 跳过未初始化的夹爪或已发送命令的夹爪
             }
-        }
-        
-        // 如果任何一个电机位置无效，就直接返回，等待下次循环重新检查
-        if (!all_positions_valid) {
-            return; // 退出，下次循环再尝试
-        }
-        
-        // 所有位置都有效，更新last_position
-        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
-            MotorInstance* m = joint_motor_list[i];
-            m->last_position = current_positions[i];
-        }
-        
-        // 第二步：初始化轨迹插值器
-        arm_interpolator.init(0.01f, 10.0f, 100.0f); // Ts=0.01s, Vmax=10deg/s, Amax=100deg/s²
-        
-        // 第三步：设置初始位置为当前电机位置
-        float initial_pos[JOINT_DOF];
-        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
-            initial_pos[i] = current_positions[i];
-        }
-        arm_interpolator.set_initial_position(initial_pos);
-        
-        interpolator_initialized = true;
-        
-        #ifdef ARDUPILOT_BUILD
-        hal.console->printf("Trajectory interpolator initialized with valid motor positions\n");
-        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
-            hal.console->printf("Motor %d: position %.2f degrees\n", i+1, current_positions[i]);
-        }
-        #endif
-    }
-
-    // 只有当插值器已初始化时，才进行插值和电机控制
-    if (interpolator_initialized) {
-        // 检查轨迹数据队列中是否有新的轨迹点需要添加到插值器队列
-        CAN2TrajectoryData trajectory_item;
-        uint8_t processed_count = 0;
-        const uint8_t max_process_per_cycle = 5;  // 每周期最多处理5个点，避免阻塞
-        
-        while (trajectory_queue.pop(trajectory_item) && processed_count < max_process_per_cycle) {
-            // 添加新的轨迹点到插值器队列
-            bool success = arm_interpolator.add_trajectory_point(
-                trajectory_item.joint_positions, 
-                trajectory_item.is_final_point
-            );
             
-            if (success) {
-                #ifdef ARDUPILOT_BUILD
-                hal.console->printf("Added trajectory point to interpolator, queue size: %d\n", 
-                                   arm_interpolator.get_queue_size());
-                #endif
-                processed_count++;
-            } else {
-                #ifdef ARDUPILOT_BUILD
-                hal.console->printf("Failed to add trajectory point - interpolator queue full\n");
-                #endif
-                // 如果插值器队列满，将轨迹点放回队列头部（这里简化处理，直接丢弃）
-                break;
-            }
-        }
-        
-        // 如果处理了轨迹点，记录信息
-        if (processed_count > 0) {
+            MotorInstance* gripper = gripper_motors[gripper_id];
+            
+            // 发送总线启动指令 (INIT) - 只发送一次
+            gripper->mode = CTRL_MODE_INIT;
+            gripper->target_value = 0.0f;
+            MIT_Motor::MotorControl_Handler(gripper);
+            kegu_init_sent[gripper_id] = true; // 标记已发送
+            hal.scheduler->delay(100); // 延时100ms
+            
             #ifdef ARDUPILOT_BUILD
-            hal.console->printf("Processed %d trajectory points, remaining in queue: %d\n", 
-                               processed_count, trajectory_queue.size());
+            hal.console->printf("ARM%d Gripper: Sending INIT command (CAN_ID=%d, Motor_ID=%d) - ONCE\n", 
+                               gripper_id+1, gripper->can_id, gripper->motor_id);
             #endif
+            AP::logger().Write_MessageF("ARM%d_GRIPPER: INIT command sent (motor_id=%d)", gripper_id+1, gripper->motor_id);
         }
         
-        // 使用插值器生成平滑的轨迹点
-        float interpolated_pos[JOINT_DOF];
-        arm_interpolator.update(interpolated_pos);
-        
-        // 计算插值速度（当前位置 - 前一次位置）/ 时间间隔
-        static bool first_interpolation = true;
-        if (!first_interpolation) {
-            for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
-                interpolated_velocities[i] = (interpolated_pos[i] - prev_interpolated_pos[i]) / 0.01f; // deg/s
-            }
-        } else {
-            // 第一次插值，速度设为0
-            for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
-                interpolated_velocities[i] = 0.0f;
-            }
-            first_interpolation = false;
+        // 等待100ms后标记初始化完成
+        if (now_ms - kegu_init_start_time > 100) {
+            kegu_init_complete = true;
+            uint32_t init_duration = now_ms - kegu_init_start_time;
+            AP::logger().Write_MessageF("KEGU_INIT: All %d grippers ready (took %ums)", GRIPPER_COUNT, init_duration);
+            GCS_SEND_TEXT(MAV_SEVERITY_INFO, "KEGU grippers initialized");
+        } else if (now_ms - kegu_init_start_time > 5000) {
+            // 超时保护 - 5秒后强制完成
+            kegu_init_complete = true;
+            AP::logger().Write_MessageF("KEGU_INIT: Timeout - forcing completion");
+            GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "KEGU gripper init timeout");
         }
         
-        // 保存当前位置供下次计算速度使用
-        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
-            prev_interpolated_pos[i] = interpolated_pos[i];
+        if (!kegu_init_complete) {
+            return; // 等待夹爪初始化完成
         }
-        
-        // 将插值结果发送给电机
-        for (uint8_t i = 0; i < JOINT_MOTOR_COUNT; i++) {
-            MotorInstance* m = joint_motor_list[i];
-            
-            // 更新目标位置
-            m->target_value = interpolated_pos[i];
-            
-            // 发送控制指令
-            MIT_Motor::MotorControl_Handler(m);
-        }
-        
-        // 轨迹执行完毕后保持最后位置
-        // 当队列为空时，机器人臂将保持在最后一个位置不动
-    } 
+    }
     
-    // 日志记录移到这里，确保记录的是实际发送给电机的控制指令
-#if HAL_LOGGING_ENABLED
-    // Log robot arm motor data at 5Hz
+    // === 5. 性能监控开始 ===
+    uint32_t loop_start_time_us = AP_HAL::micros();
+    
+    // === 6. 批量更新所有机械臂状态 ===
+    for (uint8_t arm_id = 0; arm_id < ARM_COUNT; arm_id++) {
+        update_arm_status(arm_id);
+    }
+    
+    // === 7. 批量控制所有机械臂 ===
+    for (uint8_t arm_id = 0; arm_id < ARM_COUNT; arm_id++) {
+        control_arm_motors(arm_id);
+    }
+    
+    // === 8. 双夹爪智能控制 ===
+    MIT_Motor::process_dual_gripper_control();
+    
+    // === 9. 性能监控和日志记录 ===
+    uint32_t loop_execution_time_us = AP_HAL::micros() - loop_start_time_us;
+    
+    // 性能警告（如果超过预算的80%）
+    static uint32_t last_performance_warning_ms = 0;
+    if (loop_execution_time_us > 160) { // 200μs的80%
+        uint32_t now_ms = AP_HAL::millis();
+        if (now_ms - last_performance_warning_ms > 1000) { // 每秒最多一次警告
+            AP::logger().Write_MessageF("DUAL_ARM_PERF: Loop time %uμs > 160μs threshold", loop_execution_time_us);
+            last_performance_warning_ms = now_ms;
+        }
+    }
+    
+    #if HAL_LOGGING_ENABLED
+    // 低频率日志记录（5Hz，避免影响性能）
     static uint32_t last_log_time_ms = 0;
-    uint32_t now_ms = AP_HAL::millis();
-    if (now_ms - last_log_time_ms >= 10) {  // Log every 200ms (5Hz)
-        Log_Write_RobotArm1();  // Motors 1-3
-        Log_Write_RobotArm2();  // Motors 4-6
-        Log_Write_GripperMotor();  // KEGU gripper motor
-        last_log_time_ms = now_ms;
+    uint32_t log_now_ms = AP_HAL::millis();
+    if (log_now_ms - last_log_time_ms >= 200) { // 每200ms记录一次
+        Log_Write_RobotArm1();  // ARM1 Motors 1-3
+        Log_Write_RobotArm2();  // ARM1 Motors 4-6
+        // TODO: 添加ARM2的日志记录函数
+        Log_Write_GripperMotor(); // 所有夹爪
+        Log_Write_InterpolatedTrajectory(); // 所有轨迹数据
+        
+        // 记录性能数据
+        AP::logger().Write_MessageF("DUAL_ARM_TIMING: Loop=%uμs Budget=200μs Usage=%.1f%%", 
+                                   loop_execution_time_us, (loop_execution_time_us * 100.0f) / 200.0f);
+        
+        last_log_time_ms = log_now_ms;
     }
+    #endif
     
-    // Log interpolated trajectory data at 5Hz
-    static uint32_t last_interp_log_time_ms = 0;
-    if (now_ms - last_interp_log_time_ms >= 10) {  // Log every 100ms (10Hz)
-        Log_Write_InterpolatedTrajectory();
-        last_interp_log_time_ms = now_ms;
-    }
-
-#endif
+    // === 10. 向后兼容性支持 ===
+    // gripper_position, gripper_velocity, gripper_current 现在是引用，自动指向gripper_positions[0]等
+    // 无需手动更新
 }
-
-
 
 void Rover::get_scheduler_tasks(const AP_Scheduler::Task *&tasks,
                                 uint8_t &task_count,
@@ -696,7 +473,11 @@ Rover::Rover(void) :
     arm_t_counter(0),
     arm_current_point(0),
     arm_initialized(false),
-    debug_counter(0)
+    debug_counter(0),
+    // Initialize references to gripper arrays[0] for backward compatibility
+    gripper_position(gripper_positions[0]),
+    gripper_velocity(gripper_velocities[0]),
+    gripper_current(gripper_currents[0])
 {
     // Initialize robot arm arrays
     memset(motor_instances, 0, sizeof(motor_instances));
@@ -709,6 +490,11 @@ Rover::Rover(void) :
     memset(motor_positions, 0, sizeof(motor_positions));
     memset(motor_velocities, 0, sizeof(motor_velocities));
     memset(motor_currents, 0, sizeof(motor_currents));
+    
+    // Initialize gripper arrays
+    memset(gripper_positions, 0, sizeof(gripper_positions));
+    memset(gripper_velocities, 0, sizeof(gripper_velocities));
+    memset(gripper_currents, 0, sizeof(gripper_currents));
     
     // Initialize interpolation tracking arrays
     memset(prev_interpolated_pos, 0, sizeof(prev_interpolated_pos));
@@ -1155,5 +941,192 @@ void Rover::set_kegu_control_enabled(bool enabled)
     #ifdef ARDUPILOT_BUILD
     hal.console->printf("KEGU Control %s\n", enabled ? "ENABLED" : "DISABLED");
     #endif
+}
+
+// 新增：双臂初始化函数
+void Rover::dual_arm_init()
+{
+    // 首先初始化电机实例数组
+    MIT_Motor::init_motor_instances();
+    
+    // 为每个机械臂初始化电机
+    for (uint8_t arm_id = 0; arm_id < ARM_COUNT; arm_id++) {
+        if (arms_initialized[arm_id]) {
+            continue;
+        }
+        
+        for (uint8_t joint_id = 0; joint_id < JOINT_MOTOR_COUNT; joint_id++) {
+            MotorInstance* m = arm_motor_list[arm_id][joint_id];
+            m->enabled = true;
+            m->mode = CTRL_MODE_POSITION;
+            m->first_command = true;
+            m->type = MOTOR_TYPE_MIT;
+            m->queue = PositionQueue();
+            
+            #ifdef ARDUPILOT_BUILD
+            hal.console->printf("ARM%d Motor%d: CAN_ID=%d, Motor_ID=%d\n", 
+                               arm_id+1, joint_id+1, m->can_id, m->motor_id);
+            #endif
+        }
+        
+        // 初始化对应的轨迹插值器
+        arm_interpolators[arm_id].init(0.01f, 10.0f, 100.0f);
+        arms_initialized[arm_id] = true;
+        
+        AP::logger().Write_MessageF("ARM%d: Initialized %d joint motors", arm_id+1, JOINT_MOTOR_COUNT);
+    }
+    
+    // 初始化夹爪电机
+    for (uint8_t gripper_id = 0; gripper_id < GRIPPER_COUNT; gripper_id++) {
+        if (grippers_initialized[gripper_id]) {
+            continue;
+        }
+        
+        MotorInstance* gripper = gripper_motors[gripper_id];
+        gripper->enabled = true;
+        gripper->mode = CTRL_MODE_INIT;
+        gripper->first_command = true;
+        gripper->type = MOTOR_TYPE_KEGU;
+        gripper->target_value = 0.0f;
+        gripper->queue = PositionQueue();
+        
+        grippers_initialized[gripper_id] = true;
+        
+        #ifdef ARDUPILOT_BUILD
+        hal.console->printf("ARM%d Gripper: CAN_ID=%d, Motor_ID=%d\n", 
+                           gripper_id+1, gripper->can_id, gripper->motor_id);
+        #endif
+        
+        AP::logger().Write_MessageF("ARM%d: KEGU gripper initialized", gripper_id+1);
+    }
+}
+
+// 新增：单个机械臂状态更新
+void Rover::update_arm_status(uint8_t arm_id)
+{
+    if (arm_id >= ARM_COUNT) return;
+    
+    // 更新关节电机状态
+    for (uint8_t joint_id = 0; joint_id < JOINT_MOTOR_COUNT; joint_id++) {
+        MotorInstance* m = arm_motor_list[arm_id][joint_id];
+        uint8_t global_motor_idx = arm_id * JOINT_MOTOR_COUNT + joint_id;
+        
+        motor_positions[global_motor_idx] = MIT_Motor::get_motor_position(m->can_id, m->motor_id);
+        motor_velocities[global_motor_idx] = MIT_Motor::get_motor_velocity(m->can_id, m->motor_id);
+        motor_currents[global_motor_idx] = MIT_Motor::get_motor_current(m->can_id, m->motor_id);
+        
+        // 更新last_position
+        if (!isnan(motor_positions[global_motor_idx])) {
+            m->last_position = motor_positions[global_motor_idx];
+        }
+    }
+    
+    // 更新夹爪状态
+    if (arm_id < GRIPPER_COUNT) {
+        gripper_positions[arm_id] = MIT_Motor::get_gripper_position_by_id(arm_id);
+        gripper_velocities[arm_id] = MIT_Motor::get_gripper_velocity_by_id(arm_id); 
+        gripper_currents[arm_id] = MIT_Motor::get_gripper_current_by_id(arm_id);
+    }
+}
+
+// 新增：单个机械臂轨迹插值处理
+void Rover::process_arm_interpolation(uint8_t arm_id)
+{
+    if (arm_id >= ARM_COUNT) return;
+    
+    // 检查插值器是否已初始化
+    static bool interpolators_initialized[ARM_COUNT] = {false, false};
+    
+    if (!interpolators_initialized[arm_id]) {
+        // 获取当前电机位置进行初始化
+        float current_positions[JOINT_MOTOR_COUNT];
+        bool all_positions_valid = true;
+        
+        for (uint8_t joint_id = 0; joint_id < JOINT_MOTOR_COUNT; joint_id++) {
+            MotorInstance* m = arm_motor_list[arm_id][joint_id];
+            current_positions[joint_id] = MIT_Motor::get_motor_position(m->can_id, m->motor_id);
+            
+            if (isnan(current_positions[joint_id]) || fabsf(current_positions[joint_id]) > 720.0f) {
+                all_positions_valid = false;
+                break;
+            }
+        }
+        
+        if (!all_positions_valid) {
+            return; // 等待有效位置数据
+        }
+        
+        // 设置初始位置
+        arm_interpolators[arm_id].set_initial_position(current_positions);
+        interpolators_initialized[arm_id] = true;
+        
+        #ifdef ARDUPILOT_BUILD
+        hal.console->printf("ARM%d: Trajectory interpolator initialized\n", arm_id+1);
+        #endif
+    }
+    
+    // 检查是否有新的轨迹数据需要处理
+    CAN2TrajectoryData new_trajectory;
+    if (trajectory_queues[arm_id].pop(new_trajectory)) {
+        // 发现新轨迹点，设置到插值器
+        arm_interpolators[arm_id].add_trajectory_point(new_trajectory.joint_positions);
+    }
+    
+    // 执行轨迹插值
+    float interpolated_pos[JOINT_MOTOR_COUNT];
+    arm_interpolators[arm_id].update(interpolated_pos);
+    
+    // 计算插值速度
+    for (uint8_t joint_id = 0; joint_id < JOINT_MOTOR_COUNT; joint_id++) {
+        interpolated_velocities[arm_id][joint_id] = 
+            (interpolated_pos[joint_id] - prev_interpolated_pos[arm_id][joint_id]) / 0.01f;
+        prev_interpolated_pos[arm_id][joint_id] = interpolated_pos[joint_id];
+    }
+    
+    // 发送控制指令到电机
+    for (uint8_t joint_id = 0; joint_id < JOINT_MOTOR_COUNT; joint_id++) {
+        MotorInstance* m = arm_motor_list[arm_id][joint_id];
+        m->target_value = interpolated_pos[joint_id];
+        MIT_Motor::MotorControl_Handler(m);
+    }
+}
+
+// 新增：单个机械臂电机控制
+void Rover::control_arm_motors(uint8_t arm_id)
+{
+    if (arm_id >= ARM_COUNT || !arms_initialized[arm_id]) {
+        return;
+    }
+    
+    // 处理轨迹插值和电机控制
+    process_arm_interpolation(arm_id);
+    
+    // 处理夹爪控制（如果对应夹爪存在且已初始化）
+    if (arm_id < GRIPPER_COUNT && grippers_initialized[arm_id]) {
+        MotorInstance* gripper = gripper_motors[arm_id];
+        
+        // 夹爪模式管理（简化版本，实际可能需要独立状态机）
+        static bool gripper_mode_switched[GRIPPER_COUNT] = {false, false};
+        
+        if (!gripper_mode_switched[arm_id] && gripper->mode == CTRL_MODE_INIT) {
+            gripper->mode = CTRL_MODE_VELOCITY;
+            gripper_mode_switched[arm_id] = true;
+            
+            AP::logger().Write_MessageF("ARM%d_GRIPPER: Switched to velocity control", arm_id+1);
+        }
+        
+        if (gripper_mode_switched[arm_id]) {
+            // 基本夹爪控制逻辑（可根据需要扩展）
+            static float gripper_target_velocities[GRIPPER_COUNT] = {0.0f, 0.0f};
+            
+            // 电流保护
+            if (fabsf(gripper_currents[arm_id]) > 200.0f) {
+                gripper_target_velocities[arm_id] = 0.0f;
+            }
+            
+            gripper->target_value = gripper_target_velocities[arm_id];
+            MIT_Motor::MotorControl_Handler(gripper);
+        }
+    }
 }
 

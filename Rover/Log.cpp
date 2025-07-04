@@ -383,18 +383,18 @@ void Rover::Log_Write_InterpolatedTrajectory()
     struct log_InterpolatedTrajectory pkt = {
         LOG_PACKET_HEADER_INIT(LOG_INTERP_TRAJ_MSG),
         time_us         : AP_HAL::micros64(),
-        interp_pos1     : prev_interpolated_pos[0],
-        interp_pos2     : prev_interpolated_pos[1],
-        interp_pos3     : prev_interpolated_pos[2],
-        interp_pos4     : prev_interpolated_pos[3],
-        interp_pos5     : prev_interpolated_pos[4],
-        interp_pos6     : prev_interpolated_pos[5],
-        interp_vel1     : interpolated_velocities[0],
-        interp_vel2     : interpolated_velocities[1],
-        interp_vel3     : interpolated_velocities[2],
-        interp_vel4     : interpolated_velocities[3],
-        interp_vel5     : interpolated_velocities[4],
-        interp_vel6     : interpolated_velocities[5]
+        interp_pos1     : prev_interpolated_pos[0][0],  // ARM1 关节1
+        interp_pos2     : prev_interpolated_pos[0][1],  // ARM1 关节2
+        interp_pos3     : prev_interpolated_pos[0][2],  // ARM1 关节3
+        interp_pos4     : prev_interpolated_pos[0][3],  // ARM1 关节4
+        interp_pos5     : prev_interpolated_pos[0][4],  // ARM1 关节5
+        interp_pos6     : prev_interpolated_pos[0][5],  // ARM1 关节6
+        interp_vel1     : interpolated_velocities[0][0], // ARM1 关节1速度
+        interp_vel2     : interpolated_velocities[0][1], // ARM1 关节2速度
+        interp_vel3     : interpolated_velocities[0][2], // ARM1 关节3速度
+        interp_vel4     : interpolated_velocities[0][3], // ARM1 关节4速度
+        interp_vel5     : interpolated_velocities[0][4], // ARM1 关节5速度
+        interp_vel6     : interpolated_velocities[0][5]  // ARM1 关节6速度
     };
     logger.WriteBlock(&pkt, sizeof(pkt));
 }
@@ -406,9 +406,9 @@ void Rover::Log_Write_MotorControlCmd1()
     struct log_MotorControlCmd1 pkt = {
         LOG_PACKET_HEADER_INIT(LOG_MCMD1_MSG),
         time_us         : AP_HAL::micros64(),
-        cmd_pos1        : prev_interpolated_pos[0],  // 使用插值位置作为命令位置
-        cmd_pos2        : prev_interpolated_pos[1],
-        cmd_pos3        : prev_interpolated_pos[2],
+        cmd_pos1        : prev_interpolated_pos[0][0],  // ARM1关节1插值位置
+        cmd_pos2        : prev_interpolated_pos[0][1],  // ARM1关节2插值位置
+        cmd_pos3        : prev_interpolated_pos[0][2],  // ARM1关节3插值位置
         feedback_pos1   : motor_positions[0],
         feedback_pos2   : motor_positions[1],
         feedback_pos3   : motor_positions[2]
@@ -422,9 +422,9 @@ void Rover::Log_Write_MotorControlCmd2()
     struct log_MotorControlCmd2 pkt = {
         LOG_PACKET_HEADER_INIT(LOG_MCMD2_MSG),
         time_us         : AP_HAL::micros64(),
-        cmd_pos4        : prev_interpolated_pos[3],  // 使用插值位置作为命令位置
-        cmd_pos5        : prev_interpolated_pos[4],
-        cmd_pos6        : prev_interpolated_pos[5],
+        cmd_pos4        : prev_interpolated_pos[0][3],  // ARM1关节4插值位置
+        cmd_pos5        : prev_interpolated_pos[0][4],  // ARM1关节5插值位置
+        cmd_pos6        : prev_interpolated_pos[0][5],  // ARM1关节6插值位置
         feedback_pos4   : motor_positions[3],
         feedback_pos5   : motor_positions[4],
         feedback_pos6   : motor_positions[5]

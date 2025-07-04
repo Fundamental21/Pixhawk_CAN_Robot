@@ -258,11 +258,11 @@ AP_HAL::CANFrame create_kegu_motor_frame(uint8_t can_id, uint8_t motor_id, uint8
     return frame;
 }
 
-// Process incoming MIT motor frame - 可能被CAN接收模块调用
+// Process incoming MIT motor frame - 可能被CAN接收模块调用 (双臂配置)
 void process_mit_motor_frame(const AP_HAL::CANFrame &frame, Mit_Motor_Status &status)
 {
     const uint8_t motor_id = frame.id & 0x0F;
-    if (motor_id >= 8)
+    if (motor_id >= 16)  // 扩展到16个电机以支持双臂配置
     {
         return;
     }
@@ -292,11 +292,11 @@ void process_mit_motor_frame(const AP_HAL::CANFrame &frame, Mit_Motor_Status &st
     }
 }
 
-// Process incoming KEGU motor frame - 可能被CAN接收模块调用
+// Process incoming KEGU motor frame - 可能被CAN接收模块调用 (双臂配置)
 void process_kegu_motor_frame(const AP_HAL::CANFrame &frame, KeGu_Motor_Status &status)
 {
     const uint8_t motor_id = frame.id & 0x0F;
-    if (motor_id >= 8)
+    if (motor_id >= 16)  // 扩展到16个电机以支持双臂配置
     {
         return;
     }
@@ -323,8 +323,8 @@ void process_kegu_motor_frame(const AP_HAL::CANFrame &frame, KeGu_Motor_Status &
     }
 }
 
-// Get motor position - 可能被MIT_Motor模块调用
-float get_motor_position(uint8_t can_id, uint8_t motor_id, MotorType type)
+// Get motor position with type - 重命名以避免与MIT_Motor::get_motor_position冲突
+float get_motor_position_with_type(uint8_t can_id, uint8_t motor_id, MotorType type)
 {
     CAN_Robot_Tx_Process *processor = CAN_Robot_Tx_Process::get_singleton();
     if (processor == nullptr)
@@ -335,7 +335,7 @@ float get_motor_position(uint8_t can_id, uint8_t motor_id, MotorType type)
     if (type == MotorType::MIT)
     {
         const Mit_Motor_Status &status = processor->get_mit_status();
-        if (motor_id < 8)
+        if (motor_id < 16)  // 扩展到16个电机以支持双臂配置
         {
             return status.position[motor_id];
         }
@@ -343,7 +343,7 @@ float get_motor_position(uint8_t can_id, uint8_t motor_id, MotorType type)
     else if (type == MotorType::KEGU)
     {
         const KeGu_Motor_Status &status = processor->get_kegu_status();
-        if (motor_id < 8)
+        if (motor_id < 16)  // 扩展到16个电机以支持双臂配置
         {
             return status.position[motor_id];
         }

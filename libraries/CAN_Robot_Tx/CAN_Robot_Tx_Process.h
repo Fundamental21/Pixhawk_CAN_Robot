@@ -7,19 +7,19 @@
 #include <GCS_MAVLink/GCS.h>
 #include "CAN_Robot_Common.h"
 
-// Motor status structures with C++ style initialization
+// Motor status structures with C++ style initialization - 双臂配置扩展
 struct Mit_Motor_Status {
-    float velocity[8]{};    // RPM
-    float position[8]{};    // Degrees
-    float current[8]{};     // Amps
-    float temperature[8]{}; // Celsius
-    uint8_t state[8]{};     // Motor state flags
+    float velocity[16]{};    // RPM - 扩展到16个以支持双臂 (12个关节+2个夹爪+预留)
+    float position[16]{};    // Degrees
+    float current[16]{};     // Amps
+    float temperature[16]{}; // Celsius
+    uint8_t state[16]{};     // Motor state flags
 };
 
 struct KeGu_Motor_Status {
-    float speed[8]{};     // RPM
-    float current[8]{};   // mA
-    float position[8]{};  // pulse
+    float speed[16]{};     // RPM - 扩展到16个以支持双臂
+    float current[16]{};   // mA
+    float position[16]{};  // pulse
 };
 
 // CAN frame creation helpers (internal use only)
@@ -30,8 +30,7 @@ AP_HAL::CANFrame create_kegu_motor_frame(uint8_t can_id, uint8_t motor_id, uint8
 void process_mit_motor_frame(const AP_HAL::CANFrame &frame, Mit_Motor_Status &status);
 void process_kegu_motor_frame(const AP_HAL::CANFrame &frame, KeGu_Motor_Status &status);
 
-// Motor position getter (for MIT_Motor module)
-float get_motor_position(uint8_t can_id, uint8_t motor_id, MotorType type);
+// 注意：电机位置获取函数现在统一在 CAN_Robot_Common.h 中声明
 
 // Main CAN TX processor class (Singleton pattern)
 class CAN_Robot_Tx_Process {
