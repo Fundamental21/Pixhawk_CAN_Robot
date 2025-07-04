@@ -367,7 +367,7 @@ bool CAN_Robot_Rx_Process::is_kegu_motor_id(uint32_t motor_id) const
     // KEGU电机使用特定的ID模式
     uint16_t high_part = (motor_id >> 8) & 0xFF;
     // 夹爪电机ID=7和ID=14都是KEGU类型，用于自动上报数据
-    return (high_part == 0x02 || high_part == 0x03 || motor_id == 0x07 || motor_id == 0x0E);
+    return (high_part == 0x02 || high_part == 0x03);
 }
 
 uint8_t CAN_Robot_Rx_Process::extract_motor_id(uint32_t motor_id) const
@@ -376,8 +376,8 @@ uint8_t CAN_Robot_Rx_Process::extract_motor_id(uint32_t motor_id) const
         // KEGU电机：从CAN ID中提取电机ID
         uint16_t high_part = (motor_id >> 8) & 0xFF;
         if (high_part == 0x02 || high_part == 0x03) {
-            uint8_t extracted_id = motor_id & 0xFF;  // CAN ID格式：0x2XY或0x3XY，电机ID在低字节
-            
+            uint8_t extracted_id = motor_id & 0x0F;  // CAN ID格式：0x2XY或0x3XY，电机ID在低4位
+            // motor_id = 0x287 or 0x28E, extracted_id = 0x07 or 0x0E
             // 验证提取的ID是否在有效范围内（1-14为有效电机ID）
             if (extracted_id >= 1 && extracted_id <= 14) {
                 return extracted_id - 1;  // 转换为0-based数组索引（0-13）
@@ -387,13 +387,7 @@ uint8_t CAN_Robot_Rx_Process::extract_motor_id(uint32_t motor_id) const
                 //              (unsigned long)motor_id, extracted_id);
                 return 0;  // 返回默认索引0
             }
-        } else if (motor_id == 0x07) {
-            // 特殊情况：ARM1夹爪，电机ID=7映射到数组索引6
-            return 6;  // 0-based索引：电机ID7 -> 索引6
-        } else if (motor_id == 0x0E) {
-            // 特殊情况：ARM2夹爪，电机ID=14映射到数组索引13
-            return 13;  // 0-based索引：电机ID14 -> 索引13
-        }
+        } 
     }
     // MIT电机：motor_id就是电机ID，需要转换为0-based索引
     uint8_t extracted_id = motor_id & 0xFF;

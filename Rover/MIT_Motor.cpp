@@ -153,7 +153,16 @@ float queue_pop(PositionQueue* q) {
 //---------------------Motor Control Handler---------------------
 void MotorControl_Handler(MotorInstance* motor)
 {
-    if(!motor || !motor->enabled) return;
+    if(!motor) {
+        GCS_SEND_TEXT(MAV_SEVERITY_ERROR, "MotorControl_Handler: NULL motor pointer");
+        return;
+    }
+    
+    if (!motor->enabled) {
+        GCS_SEND_TEXT(MAV_SEVERITY_ERROR, "MotorControl_Handler: Motor disabled - motor_id=%d, can_id=%d", 
+                     motor->motor_id, motor->can_id);
+        return;
+    }
 
     // Get the queue singleton
     CAN_Robot_Tx_Queue* queue = CAN_Robot_Tx_Queue::get_singleton();
@@ -570,7 +579,7 @@ float get_gripper_current_by_id(uint8_t gripper_id)
     // Get the CAN Rx processor singleton
     CAN_Robot_Rx_Process* rx_processor = CAN_Robot_Rx_Process::get_singleton();
     if (!rx_processor) {
-        return NAN;  // Return NAN to indicate no valid data
+        return -1;  // Return NAN to indicate no valid data
     }
     
     uint8_t motor_array_index;
@@ -580,7 +589,7 @@ float get_gripper_current_by_id(uint8_t gripper_id)
     } else if (gripper_id == 1) {
         motor_array_index = 13; // ARM2夹爪，数组索引13
     } else {
-        return NAN;  // 无效的夹爪ID
+        return -2;  // 无效的夹爪ID
     }
     
     uint8_t can_channel = 0;  // CAN1
@@ -593,229 +602,29 @@ float get_gripper_current_by_id(uint8_t gripper_id)
         return kegu_feedback.current;  // 直接返回mA单位
     }
     
-    return NAN;  // Return NAN to indicate no valid data
+    return -3;  // Return NAN to indicate no valid data
 }
 
 //---------------------双夹爪智能控制函数---------------------
 // 双夹爪智能控制函数 - 处理状态获取、速度控制、外部命令等
 void process_dual_gripper_control()
-{
-    // 为每个夹爪进行控制处理
-    for (uint8_t gripper_id = 0; gripper_id < 2; gripper_id++) {
-        if (!grippers_initialized[gripper_id]) {
-            continue; // 跳过未初始化的夹爪
-        }
-        
-        MotorInstance* gripper_motor = gripper_motors[gripper_id];
-        
-        // 获取夹爪电机状态数据 - 夹爪电机会自动上报数据
-        gripper_positions[gripper_id] = get_gripper_position_by_id(gripper_id);
-        gripper_velocities[gripper_id] = get_gripper_velocity_by_id(gripper_id);
-        gripper_currents[gripper_id] = get_gripper_current_by_id(gripper_id);
-        
-        // 使用日志记录方法打印KEGU电机电流 - 每1000ms打印一次
-        static uint32_t last_current_print_ms[2] = {0, 0};
-        uint32_t current_print_now_ms = AP_HAL::millis();
-        if (current_print_now_ms - last_current_print_ms[gripper_id] >= 1000) {  // 每1000ms打印一次电流值
-            // 使用AP::logger()方法记录电流到日志
-            AP::logger().Write_MessageF("ARM%d_KEGU_CURRENT: %.2fmA", gripper_id+1, gripper_currents[gripper_id]);
-            
-            // 同时使用GCS发送文本消息
-            GCS_SEND_TEXT(MAV_SEVERITY_DEBUG, "ARM%d KEGU Current: %.2fmA", gripper_id+1, gripper_currents[gripper_id]);
-            
-            last_current_print_ms[gripper_id] = current_print_now_ms;
-        }
-
-        // KEGU电机速度控制 - 初始化完成后切换到速度控制模式
-        static bool kegu_mode_switched[2] = {false, false};
-        static bool first_velocity_set[2] = {false, false};
-        static float current_target_velocity[2] = {0.0f, 0.0f};
-        
-        if (!kegu_mode_switched[gripper_id] && gripper_motor->mode == CTRL_MODE_INIT) {
-            // 初始化完成，切换到速度控制模式
-            gripper_motor->mode = CTRL_MODE_VELOCITY;
-            kegu_mode_switched[gripper_id] = true;
-            
-            #ifdef ARDUPILOT_BUILD
-            hal.console->printf("ARM%d KEGU: Switched to velocity control mode\n", gripper_id+1);
-            #endif
-            
-            // 添加模式切换调试信息
-            AP::logger().Write_MessageF("ARM%d_KEGU_MODE: Switched from INIT to VELOCITY control", gripper_id+1);
-            GCS_SEND_TEXT(MAV_SEVERITY_INFO, "ARM%d KEGU Gripper: Ready for velocity control", gripper_id+1);
-        }
-        
-        if (kegu_mode_switched[gripper_id]) {
-            // 检查是否有外部命令正在处理（现在两个夹爪都支持外部命令）
-            bool external_command_active = kegu_external_commands_received[gripper_id];
-            
-            if (!external_command_active) {
-                // 只有在没有外部命令时才执行默认的自动控制逻辑
-                // 第一次循环控制时设置速度为0
-                if (!first_velocity_set[gripper_id]) {
-                    current_target_velocity[gripper_id] = 0.0f;
-                    first_velocity_set[gripper_id] = true;
-                    
-                    #ifdef ARDUPILOT_BUILD
-                    hal.console->printf("ARM%d KEGU: First velocity set to %.1f\n", gripper_id+1, current_target_velocity[gripper_id]);
-                    #endif
-                    
-                    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "ARM%d KEGU: Initial velocity set to 0", gripper_id+1);
-                }
-                
-                // 监控电流，当电流>200mA后设置速度为0
-                if (fabsf(gripper_currents[gripper_id]) > 200.0f) {
-                    current_target_velocity[gripper_id] = 0.0f;
-                    gripper_motor->target_value = 0.0f;
-                    set_gripper_velocity_by_id(gripper_id, 0.0f);  // 使用支持双夹爪的函数
-                    
-                    AP::logger().Write_MessageF("ARM%d_KEGU: Current %.1fmA > 200mA threshold, stopping motor", 
-                                               gripper_id+1, gripper_currents[gripper_id]);
-                    
-                    #ifdef ARDUPILOT_BUILD
-                    hal.console->printf("ARM%d KEGU: Current %.1fmA > 200mA threshold, stopping motor\n", 
-                                       gripper_id+1, gripper_currents[gripper_id]);
-                    #endif
-                    
-                    GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "ARM%d KEGU: High current detected, motor stopped", gripper_id+1);
-                }
-                
-                // 设置目标速度
-                gripper_motor->target_value = current_target_velocity[gripper_id];
-                if (gripper_id == 0) {
-                    set_gripper_velocity(current_target_velocity[gripper_id]); // 向后兼容ARM1
-                } else {
-                    set_gripper_velocity_by_id(gripper_id, current_target_velocity[gripper_id]); // ARM2使用新函数
-                }
-            }
-            
-            #ifdef ARDUPILOT_BUILD
-            static uint32_t last_debug_ms[2] = {0, 0};
-            uint32_t debug_now_ms = AP_HAL::millis();
-            if (debug_now_ms - last_debug_ms[gripper_id] >= 2000) {  // 每2秒打印一次调试信息
-                hal.console->printf("ARM%d KEGU: Velocity control - Target: %.1f, Current: %.1fmA, Velocity: %.1f, ExtCmd: %s\n", 
-                                   gripper_id+1, current_target_velocity[gripper_id], gripper_currents[gripper_id], 
-                                   gripper_velocities[gripper_id], external_command_active ? "ACTIVE" : "INACTIVE");
-                
-                // 定期记录夹爪状态到日志
-                #if HAL_LOGGING_ENABLED
-                AP::logger().Write_MessageF("ARM%d_KEGU_STATUS: Target:%.1f Current:%.1fmA Velocity:%.1f ExtCmd:%s", 
-                                           gripper_id+1, current_target_velocity[gripper_id], gripper_currents[gripper_id], 
-                                           gripper_velocities[gripper_id], external_command_active ? "ACTIVE" : "INACTIVE");
-                #endif
-                
-                last_debug_ms[gripper_id] = debug_now_ms;
-            }
-            #endif
-        }
-        
-        // 处理外部KEGU控制命令（现在支持两个夹爪）
-        if (kegu_mode_switched[gripper_id]) {
-            static uint8_t last_processed_commands[2] = {0xFF, 0xFF};  // 跟踪每个夹爪最后处理的命令
-            static bool commands_in_progress[2] = {false, false};      // 跟踪每个夹爪命令执行状态
-            
-            if (kegu_external_commands_received[gripper_id]) {
-                uint32_t current_time_ms = AP_HAL::millis();
-                
-                // 检查命令是否超时（5秒）
-                if (current_time_ms - kegu_command_timestamps[gripper_id] > 5000) {
-                    kegu_external_commands_received[gripper_id] = false;
-                    commands_in_progress[gripper_id] = false;
-                    last_processed_commands[gripper_id] = 0xFF;
-                    GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "ARM%d KEGU: External command timeout", gripper_id+1);
-                } else {
-                    // 检查是否是新命令
-                    bool is_new_command = (kegu_external_commands[gripper_id] != last_processed_commands[gripper_id]);
-                    if (is_new_command) {
-                        commands_in_progress[gripper_id] = false;  // 重置状态以处理新命令
-                        last_processed_commands[gripper_id] = kegu_external_commands[gripper_id];
-                    }
-                    
-                    // 处理有效的外部命令
-                    switch (kegu_external_commands[gripper_id]) {
-                        case 0x00: {
-                            // 停止命令
-                            current_target_velocity[gripper_id] = 0.0f;
-                            gripper_motor->target_value = 0.0f;
-                            set_gripper_velocity_by_id(gripper_id, 0.0f);
-                            
-                            AP::logger().Write_MessageF("ARM%d_KEGU_EXT_CMD: STOP command executed", gripper_id+1);
-                            GCS_SEND_TEXT(MAV_SEVERITY_INFO, "ARM%d KEGU: STOP command executed", gripper_id+1);
-                            
-                            kegu_external_commands_received[gripper_id] = false; // 命令处理完成
-                            commands_in_progress[gripper_id] = false;
-                            break;
-                        }
-                        
-                        case 0x01: {
-                            // 反转命令 - 设置负速度，包含电流检测
-                            if (!commands_in_progress[gripper_id]) {
-                                current_target_velocity[gripper_id] = -2000.0f; // 反向速度
-                                gripper_motor->target_value = current_target_velocity[gripper_id];
-                                set_gripper_velocity_by_id(gripper_id, current_target_velocity[gripper_id]);
-                                commands_in_progress[gripper_id] = true;
-                                
-                                AP::logger().Write_MessageF("ARM%d_KEGU_EXT_CMD: REVERSE command started", gripper_id+1);
-                                GCS_SEND_TEXT(MAV_SEVERITY_INFO, "ARM%d KEGU: REVERSE command started", gripper_id+1);
-                            }
-                            
-                            // 监控电流，当电流>200mA后停止
-                            if (fabsf(gripper_currents[gripper_id]) > 200.0f) {
-                                current_target_velocity[gripper_id] = 0.0f;
-                                gripper_motor->target_value = 0.0f;
-                                set_gripper_velocity_by_id(gripper_id, 0.0f);
-                                
-                                AP::logger().Write_MessageF("ARM%d_KEGU_EXT_CMD: REVERSE stopped - current %.1fmA > 200mA", 
-                                                           gripper_id+1, gripper_currents[gripper_id]);
-                                GCS_SEND_TEXT(MAV_SEVERITY_INFO, "ARM%d KEGU: REVERSE stopped - high current", gripper_id+1);
-                                
-                                commands_in_progress[gripper_id] = false;
-                                kegu_external_commands_received[gripper_id] = false; // 命令处理完成
-                            }
-                            break;
-                        }
-                        
-                        case 0x11: {
-                            // 正转命令 - 设置正速度，包含电流检测
-                            if (!commands_in_progress[gripper_id]) {
-                                current_target_velocity[gripper_id] = 2000.0f; // 正向速度
-                                gripper_motor->target_value = current_target_velocity[gripper_id];
-                                set_gripper_velocity_by_id(gripper_id, current_target_velocity[gripper_id]);
-                                commands_in_progress[gripper_id] = true;
-                                
-                                AP::logger().Write_MessageF("ARM%d_KEGU_EXT_CMD: FORWARD command started", gripper_id+1);
-                                GCS_SEND_TEXT(MAV_SEVERITY_INFO, "ARM%d KEGU: FORWARD command started", gripper_id+1);
-                            }
-                            
-                            // 监控电流，当电流>200mA后停止
-                            if (fabsf(gripper_currents[gripper_id]) > 200.0f) {
-                                current_target_velocity[gripper_id] = 0.0f;
-                                gripper_motor->target_value = 0.0f;
-                                set_gripper_velocity_by_id(gripper_id, 0.0f);
-                                
-                                AP::logger().Write_MessageF("ARM%d_KEGU_EXT_CMD: FORWARD stopped - current %.1fmA > 200mA", 
-                                                           gripper_id+1, gripper_currents[gripper_id]);
-                                GCS_SEND_TEXT(MAV_SEVERITY_INFO, "ARM%d KEGU: FORWARD stopped - high current", gripper_id+1);
-                                
-                                commands_in_progress[gripper_id] = false;
-                                kegu_external_commands_received[gripper_id] = false; // 命令处理完成
-                            }
-                            break;
-                        }
-                        
-                        default: {
-                            // 未知命令
-                            AP::logger().Write_MessageF("ARM%d_KEGU_EXT_CMD: Unknown command 0x%02X", gripper_id+1, kegu_external_commands[gripper_id]);
-                            GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "ARM%d KEGU: Unknown command 0x%02X", gripper_id+1, kegu_external_commands[gripper_id]);
-                            kegu_external_commands_received[gripper_id] = false; // 命令处理完成
-                            commands_in_progress[gripper_id] = false;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
+{   
+    set_gripper_velocity_by_id(0, 0.0f);
+    set_gripper_velocity_by_id(1, 0.0f);
+    
+    // 获取夹爪0状态反馈
+    float current0 = get_gripper_current_by_id(0);
+    float position0 = get_gripper_position_by_id(0);
+    float velocity0 = get_gripper_velocity_by_id(0);
+    
+    // 获取夹爪1状态反馈
+    float current1 = get_gripper_current_by_id(1);
+    float position1 = get_gripper_position_by_id(1);
+    float velocity1 = get_gripper_velocity_by_id(1);
+    
+    // 发送双夹爪完整状态反馈到GCS
+    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Gripper0: C:%.1fmA P:%.2fdeg V:%.2fdeg/s | Gripper1: C:%.1fmA P:%.2fdeg V:%.2fdeg/s", 
+                 current0, position0, velocity0, current1, position1, velocity1);
 }
 
 //---------------------双夹爪控制函数---------------------
@@ -870,8 +679,13 @@ void set_gripper_velocity_by_id(uint8_t gripper_id, float velocity_value)
     MotorInstance* gripper_motor = gripper_motors[gripper_id];
     
     if (!gripper_motor->enabled) {
+        GCS_SEND_TEXT(MAV_SEVERITY_ERROR, "Gripper %d BLOCKED: enabled=%d, motor_id=%d", 
+                     gripper_id, gripper_motor->enabled, gripper_motor->motor_id);
         return;
     }
+    
+    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Gripper %d OK: enabled=%d, motor_id=%d, target=%.1f", 
+                 gripper_id, gripper_motor->enabled, gripper_motor->motor_id, velocity_value);
     
     // 限制速度值在合理范围内
     if (velocity_value > 3000.0f) velocity_value = 3000.0f;
@@ -895,10 +709,7 @@ void set_gripper_velocity_by_id(uint8_t gripper_id, float velocity_value)
     
     // 使用现有的电机控制处理函数
     MotorControl_Handler(gripper_motor);
-    
-#ifdef ARDUPILOT_BUILD
-    hal.console->printf("ARM%d Gripper Velocity Set: %.2f deg/s\n", gripper_id+1, velocity_value);
-#endif
+    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "ARM%d Gripper Velocity Set: %.2f deg/s", gripper_id+1, velocity_value);
 }
 
 } // namespace MIT_Motor

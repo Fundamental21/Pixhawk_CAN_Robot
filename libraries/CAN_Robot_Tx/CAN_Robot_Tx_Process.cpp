@@ -181,7 +181,7 @@ AP_HAL::CANFrame create_kegu_motor_frame(uint8_t can_id, uint8_t motor_id, uint8
         // 总线启动指令: CAN ID = 0x000, data = [0x01, 电机ID, 0x00, ...]
         frame.id = 0x000;
         frame.data[0] = 0x01;
-        frame.data[1] = motor_id;
+        frame.data[1] = 0x00;
         // 其余字节已经被memset清零
         break;
 

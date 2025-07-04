@@ -292,14 +292,15 @@ float kegu_target_current = 0.0f;         // 不使用static，允许外部访�
 uint8_t kegu_external_command = 0;        // 外部CAN命令 (ARM1夹爪，向后兼容)
 bool kegu_external_command_received = false; // 命令接收标志 (ARM1夹爪，向后兼容)
 uint32_t kegu_command_timestamp = 0;      // 命令时间戳 (ARM1夹爪，向后兼容)
-
-
+static bool kegu_init_complete = false;
+static bool dual_arm_init_complete = false;
+static bool rx_initialized = false;
+static bool tx_initialized = false;
 
 void Rover::robot_arm_control_loop()
 {
     // === 1. 初始化阶段 ===
-    static bool rx_initialized = false;
-    static bool tx_initialized = false;
+
     
     if (!rx_initialized) {
         CAN_Robot_Rx_Queue::init();
@@ -320,7 +321,6 @@ void Rover::robot_arm_control_loop()
     }
     
     // === 3. 双臂系统初始化 ===
-    static bool dual_arm_init_complete = false;
     if (!dual_arm_init_complete) {
         dual_arm_init();
         
@@ -343,57 +343,27 @@ void Rover::robot_arm_control_loop()
     }
     
     // === 4. KEGU夹爪初始化命令发送 ===
-    static bool kegu_init_complete = false;
-    static uint32_t kegu_init_start_time = 0;
-    static bool kegu_init_sent[GRIPPER_COUNT] = {false, false}; // 跟踪每个夹爪是否已发送初始化命令
-    
-    if (dual_arm_init_complete && !kegu_init_complete) {
-        uint32_t now_ms = AP_HAL::millis();
-        
-        // 首次进入，记录开始时间
-        if (kegu_init_start_time == 0) {
-            kegu_init_start_time = now_ms;
-            AP::logger().Write_MessageF("KEGU_INIT: Starting gripper initialization sequence");
-        }
-        
-        // 为每个夹爪发送初始化命令（只发送一次）
-        for (uint8_t gripper_id = 0; gripper_id < GRIPPER_COUNT; gripper_id++) {
-            if (!grippers_initialized[gripper_id] || kegu_init_sent[gripper_id]) {
-                continue; // 跳过未初始化的夹爪或已发送命令的夹爪
-            }
-            
-            MotorInstance* gripper = gripper_motors[gripper_id];
-            
-            // 发送总线启动指令 (INIT) - 只发送一次
-            gripper->mode = CTRL_MODE_INIT;
-            gripper->target_value = 0.0f;
-            MIT_Motor::MotorControl_Handler(gripper);
-            kegu_init_sent[gripper_id] = true; // 标记已发送
-            hal.scheduler->delay(100); // 延时100ms
-            
-            #ifdef ARDUPILOT_BUILD
-            hal.console->printf("ARM%d Gripper: Sending INIT command (CAN_ID=%d, Motor_ID=%d) - ONCE\n", 
-                               gripper_id+1, gripper->can_id, gripper->motor_id);
-            #endif
-            AP::logger().Write_MessageF("ARM%d_GRIPPER: INIT command sent (motor_id=%d)", gripper_id+1, gripper->motor_id);
-        }
-        
-        // 等待100ms后标记初始化完成
-        if (now_ms - kegu_init_start_time > 100) {
-            kegu_init_complete = true;
-            uint32_t init_duration = now_ms - kegu_init_start_time;
-            AP::logger().Write_MessageF("KEGU_INIT: All %d grippers ready (took %ums)", GRIPPER_COUNT, init_duration);
-            GCS_SEND_TEXT(MAV_SEVERITY_INFO, "KEGU grippers initialized");
-        } else if (now_ms - kegu_init_start_time > 5000) {
-            // 超时保护 - 5秒后强制完成
-            kegu_init_complete = true;
-            AP::logger().Write_MessageF("KEGU_INIT: Timeout - forcing completion");
-            GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "KEGU gripper init timeout");
-        }
-        
-        if (!kegu_init_complete) {
-            return; // 等待夹爪初始化完成
-        }
+    if (!kegu_init_complete) {
+        MotorInstance* gripper0 = gripper_motors[0];
+        // 发送总线启动指令 (INIT) - 只发送一次
+        gripper0->enabled = true;
+        gripper0->mode = CTRL_MODE_INIT;
+        gripper0->first_command = true;
+        gripper0->type = MOTOR_TYPE_KEGU;
+        gripper0->target_value = 0.0f;
+        gripper0->queue = PositionQueue();
+        MIT_Motor::MotorControl_Handler(gripper0);
+
+        MotorInstance* gripper1 = gripper_motors[1];
+        // 发送总线启动指令 (INIT) - 只发送一次
+        gripper1->enabled = true;
+        gripper1->mode = CTRL_MODE_INIT;
+        gripper1->first_command = true;
+        gripper1->type = MOTOR_TYPE_KEGU;
+        gripper1->target_value = 0.0f;
+        gripper1->queue = PositionQueue();
+        MIT_Motor::MotorControl_Handler(gripper1);
+        kegu_init_complete = true;
     }
     
     // === 5. 性能监控开始 ===
@@ -924,25 +894,6 @@ float Rover::get_gripper_target_current()
     return 0.0f;  // 如果不是电流模式，返回0
 }
 
-void Rover::set_kegu_control_enabled(bool enabled)
-{
-    // 访问外部定义的静态变量
-    extern bool kegu_control_enabled;
-    extern float kegu_target_current;
-    
-    kegu_control_enabled = enabled;
-    
-    if (!enabled) {
-        // 禁用控制时，停止电机
-        kegu_target_current = 0.0f;
-        MIT_Motor::set_gripper_current(0.0f);
-    }
-    
-    #ifdef ARDUPILOT_BUILD
-    hal.console->printf("KEGU Control %s\n", enabled ? "ENABLED" : "DISABLED");
-    #endif
-}
-
 // 新增：双臂初始化函数
 void Rover::dual_arm_init()
 {
@@ -974,30 +925,6 @@ void Rover::dual_arm_init()
         arms_initialized[arm_id] = true;
         
         AP::logger().Write_MessageF("ARM%d: Initialized %d joint motors", arm_id+1, JOINT_MOTOR_COUNT);
-    }
-    
-    // 初始化夹爪电机
-    for (uint8_t gripper_id = 0; gripper_id < GRIPPER_COUNT; gripper_id++) {
-        if (grippers_initialized[gripper_id]) {
-            continue;
-        }
-        
-        MotorInstance* gripper = gripper_motors[gripper_id];
-        gripper->enabled = true;
-        gripper->mode = CTRL_MODE_INIT;
-        gripper->first_command = true;
-        gripper->type = MOTOR_TYPE_KEGU;
-        gripper->target_value = 0.0f;
-        gripper->queue = PositionQueue();
-        
-        grippers_initialized[gripper_id] = true;
-        
-        #ifdef ARDUPILOT_BUILD
-        hal.console->printf("ARM%d Gripper: CAN_ID=%d, Motor_ID=%d\n", 
-                           gripper_id+1, gripper->can_id, gripper->motor_id);
-        #endif
-        
-        AP::logger().Write_MessageF("ARM%d: KEGU gripper initialized", gripper_id+1);
     }
 }
 
@@ -1102,6 +1029,9 @@ void Rover::control_arm_motors(uint8_t arm_id)
     process_arm_interpolation(arm_id);
     
     // 处理夹爪控制（如果对应夹爪存在且已初始化）
+    // 注释：夹爪控制现在完全由 process_dual_gripper_control() 函数处理
+    // 避免重复控制导致的意外指令
+    /*
     if (arm_id < GRIPPER_COUNT && grippers_initialized[arm_id]) {
         MotorInstance* gripper = gripper_motors[arm_id];
         
@@ -1128,5 +1058,6 @@ void Rover::control_arm_motors(uint8_t arm_id)
             MIT_Motor::MotorControl_Handler(gripper);
         }
     }
+    */
 }
 

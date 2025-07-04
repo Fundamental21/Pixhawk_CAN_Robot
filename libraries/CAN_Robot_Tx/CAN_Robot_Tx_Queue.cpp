@@ -57,6 +57,22 @@ void CAN_Robot_Tx_Queue::queue_motor_command(uint8_t can_id, uint8_t motor_id, M
     // Debug logging for new commands
     AP::logger().Write_MessageF("CAN_TX_QUEUE: Queued CAN:%d Motor:%d Type:%d Mode:%d Value:%.2f", 
                                can_id, motor_id, (int)motor_type, (int)mode, (double)target_value);
+    
+    // Send command details to ground station
+    const char* type_str = (motor_type == MotorType::MIT) ? "MIT" : "KEGU";
+    const char* mode_str;
+    switch (mode) {
+        case MotorControlMode::POSITION:    mode_str = "POS"; break;
+        case MotorControlMode::VELOCITY:    mode_str = "VEL"; break;
+        case MotorControlMode::CURRENT:     mode_str = "CUR"; break;
+        case MotorControlMode::INIT:        mode_str = "INIT"; break;
+        case MotorControlMode::ENABLE_CUR:  mode_str = "EN_CUR"; break;
+        case MotorControlMode::ENABLE_VEL:  mode_str = "EN_VEL"; break;
+        default:                            mode_str = "UNK"; break;
+    }
+    
+    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "CAN_CMD: CAN%d M%d %s %s %.2f", 
+                  can_id+1, motor_id, type_str, mode_str, (double)target_value);
 }
 
 bool CAN_Robot_Tx_Queue::get_next_command(MotorCommand &cmd)
