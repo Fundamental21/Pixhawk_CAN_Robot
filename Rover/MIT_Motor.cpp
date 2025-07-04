@@ -609,9 +609,6 @@ float get_gripper_current_by_id(uint8_t gripper_id)
 // 双夹爪智能控制函数 - 处理状态获取、速度控制、外部命令等
 void process_dual_gripper_control()
 {   
-    set_gripper_velocity_by_id(0, 0.0f);
-    set_gripper_velocity_by_id(1, 0.0f);
-    
     // 获取夹爪0状态反馈
     float current0 = get_gripper_current_by_id(0);
     float position0 = get_gripper_position_by_id(0);
@@ -622,9 +619,367 @@ void process_dual_gripper_control()
     float position1 = get_gripper_position_by_id(1);
     float velocity1 = get_gripper_velocity_by_id(1);
     
-    // 发送双夹爪完整状态反馈到GCS
-    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Gripper0: C:%.1fmA P:%.2fdeg V:%.2fdeg/s | Gripper1: C:%.1fmA P:%.2fdeg V:%.2fdeg/s", 
-                 current0, position0, velocity0, current1, position1, velocity1);
+    // 处理夹爪0的CAN2控制指令 (ID=0x150)
+    // static uint8_t last_processed_command0 = 0xFF;  // 跟踪最后处理的命令
+    // static bool command_in_progress0 = false;       // 跟踪命令执行状态
+    // static uint8_t current_command0 = 0x00;         // 当前执行的命令
+    
+    // if (kegu_external_commands_received[0]) {
+    //     uint32_t current_time_ms = AP_HAL::millis();
+        
+    //     // 检查命令是否超时（5秒）
+    //     if (current_time_ms - kegu_command_timestamps[0] > 5000) {
+    //         kegu_external_commands_received[0] = false;
+    //         command_in_progress0 = false;
+    //         current_command0 = 0x00;
+    //         last_processed_command0 = 0xFF;
+    //         GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "Gripper0: External command timeout");
+    //     } else {
+    //         // 检查是否是新命令
+    //         bool is_new_command = (kegu_external_commands[0] != last_processed_command0);
+    //         if (is_new_command) {
+    //             command_in_progress0 = false;  // 重置状态以处理新命令
+    //             last_processed_command0 = kegu_external_commands[0];
+    //         }
+            
+    //         // 处理有效的外部命令
+    //         switch (kegu_external_commands[0]) {
+    //             case 0x00: {
+    //                 // 停止命令
+    //                 set_gripper_velocity_by_id(0, 0.0f);
+    //                 current_command0 = 0x00;
+                    
+    //                 AP::logger().Write_MessageF("Gripper0_EXT_CMD: STOP command executed");
+    //                 GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Gripper0: STOP command executed");
+                    
+    //                 kegu_external_commands_received[0] = false; // 命令处理完成
+    //                 command_in_progress0 = false;
+    //                 break;
+    //             }
+                
+    //             case 0x01: {
+    //                 // 反转命令 - 设置负速度
+    //                 if (!command_in_progress0) {
+    //                     set_gripper_velocity_by_id(0, -1000.0f); // 反向速度
+    //                     command_in_progress0 = true;
+    //                     current_command0 = 0x01;
+                        
+    //                     AP::logger().Write_MessageF("Gripper0_EXT_CMD: REVERSE command started");
+    //                     GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Gripper0: REVERSE command started");
+    //                 }
+    //                 break;
+    //             }
+                
+    //             case 0x11: {
+    //                 // 正转命令 - 设置正速度
+    //                 if (!command_in_progress0) {
+    //                     set_gripper_velocity_by_id(0, 1000.0f); // 正向速度
+    //                     command_in_progress0 = true;
+    //                     current_command0 = 0x11;
+                        
+    //                     AP::logger().Write_MessageF("Gripper0_EXT_CMD: FORWARD command started");
+    //                     GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Gripper0: FORWARD command started");
+    //                 }
+    //                 break;
+    //             }
+                
+    //             default: {
+    //                 // 未知命令
+    //                 AP::logger().Write_MessageF("Gripper0_EXT_CMD: Unknown command 0x%02X", kegu_external_commands[0]);
+    //                 GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "Gripper0: Unknown command 0x%02X", kegu_external_commands[0]);
+    //                 kegu_external_commands_received[0] = false; // 命令处理完成
+    //                 command_in_progress0 = false;
+    //                 current_command0 = 0x00;
+    //                 break;
+    //             }
+    //         }
+    //     }
+    // }
+    
+    // // 持续监控正在进行的运动命令的电流
+    // if (command_in_progress0 && (current_command0 == 0x01 || current_command0 == 0x11)) {
+    //     if (fabsf(current0) > 200.0f) {
+    //         set_gripper_velocity_by_id(0, 0.0f);
+            
+    //         const char* direction = (current_command0 == 0x01) ? "REVERSE" : "FORWARD";
+    //         AP::logger().Write_MessageF("Gripper0_EXT_CMD: %s stopped - current %.1fmA > 200mA", direction, current0);
+    //         GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "Gripper0: %s stopped - current %.1fmA > 200mA", direction, current0);
+            
+    //         command_in_progress0 = false;
+    //         current_command0 = 0x00;
+    //         kegu_external_commands_received[0] = false; // 命令处理完成
+    //     }
+    // }
+    
+    // // 处理夹爪1的CAN2控制指令 (ID=0x160)
+    // static uint8_t last_processed_command1 = 0xFF;  // 跟踪最后处理的命令
+    // static bool command_in_progress1 = false;       // 跟踪命令执行状态
+    // static uint8_t current_command1 = 0x00;         // 当前执行的命令
+    
+    // if (kegu_external_commands_received[1]) {
+    //     uint32_t current_time_ms = AP_HAL::millis();
+        
+    //     // 检查命令是否超时（5秒）
+    //     if (current_time_ms - kegu_command_timestamps[1] > 5000) {
+    //         kegu_external_commands_received[1] = false;
+    //         command_in_progress1 = false;
+    //         current_command1 = 0x00;
+    //         last_processed_command1 = 0xFF;
+    //         GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "Gripper1: External command timeout");
+    //     } else {
+    //         // 检查是否是新命令
+    //         bool is_new_command = (kegu_external_commands[1] != last_processed_command1);
+    //         if (is_new_command) {
+    //             command_in_progress1 = false;  // 重置状态以处理新命令
+    //             last_processed_command1 = kegu_external_commands[1];
+    //         }
+            
+    //         // 处理有效的外部命令
+    //         switch (kegu_external_commands[1]) {
+    //             case 0x00: {
+    //                 // 停止命令
+    //                 set_gripper_velocity_by_id(1, 0.0f);
+    //                 current_command1 = 0x00;
+                    
+    //                 AP::logger().Write_MessageF("Gripper1_EXT_CMD: STOP command executed");
+    //                 GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Gripper1: STOP command executed");
+                    
+    //                 kegu_external_commands_received[1] = false; // 命令处理完成
+    //                 command_in_progress1 = false;
+    //                 break;
+    //             }
+                
+    //             case 0x01: {
+    //                 // 反转命令 - 设置负速度
+    //                 if (!command_in_progress1) {
+    //                     set_gripper_velocity_by_id(1, -1000.0f); // 反向速度
+    //                     command_in_progress1 = true;
+    //                     current_command1 = 0x01;
+                        
+    //                     AP::logger().Write_MessageF("Gripper1_EXT_CMD: REVERSE command started");
+    //                     GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Gripper1: REVERSE command started");
+    //                 }
+    //                 break;
+    //             }
+                
+    //             case 0x11: {
+    //                 // 正转命令 - 设置正速度
+    //                 if (!command_in_progress1) {
+    //                     set_gripper_velocity_by_id(1, 1000.0f); // 正向速度
+    //                     command_in_progress1 = true;
+    //                     current_command1 = 0x11;
+                        
+    //                     AP::logger().Write_MessageF("Gripper1_EXT_CMD: FORWARD command started");
+    //                     GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Gripper1: FORWARD command started");
+    //                 }
+    //                 break;
+    //             }
+                
+    //             default: {
+    //                 // 未知命令
+    //                 AP::logger().Write_MessageF("Gripper1_EXT_CMD: Unknown command 0x%02X", kegu_external_commands[1]);
+    //                 GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "Gripper1: Unknown command 0x%02X", kegu_external_commands[1]);
+    //                 kegu_external_commands_received[1] = false; // 命令处理完成
+    //                 command_in_progress1 = false;
+    //                 current_command1 = 0x00;
+    //                 break;
+    //             }
+    //         }
+    //     }
+    // }
+    
+    // // 持续监控正在进行的运动命令的电流
+    // if (command_in_progress1 && (current_command1 == 0x01 || current_command1 == 0x11)) {
+    //     if (fabsf(current1) > 200.0f) {
+    //         set_gripper_velocity_by_id(1, 0.0f);
+            
+    //         const char* direction = (current_command1 == 0x01) ? "REVERSE" : "FORWARD";
+    //         AP::logger().Write_MessageF("Gripper1_EXT_CMD: %s stopped - current %.1fmA > 200mA", direction, current1);
+    //         GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "Gripper1: %s stopped - current %.1fmA > 200mA", direction, current1);
+            
+    //         command_in_progress1 = false;
+    //         current_command1 = 0x00;
+    //         kegu_external_commands_received[1] = false; // 命令处理完成
+    //     }
+    // }
+    
+    // 处理双夹爪的外部KEGU控制命令
+    // gripper0的上位机指令ID是150 (0x96)，gripper1的上位机指令ID是160 (0xA0)
+    static uint8_t last_processed_command[2] = {0xFF, 0xFF};  // 跟踪最后处理的命令
+    static bool command_in_progress[2] = {false, false};      // 跟踪命令执行状态
+    
+    // 处理夹爪0的外部命令 (ID=150/0x96)
+    if (kegu_external_commands_received[0]) {
+        // 检查是否是新命令
+        bool is_new_command = (kegu_external_commands[0] != last_processed_command[0]);
+        if (is_new_command) {
+            command_in_progress[0] = false;  // 重置状态以处理新命令
+            last_processed_command[0] = kegu_external_commands[0];
+        }
+        
+        // 获取夹爪0的当前电流
+        float gripper_current0 = get_gripper_current_by_id(0);
+        
+        // 处理有效的外部命令
+        switch (kegu_external_commands[0]) {
+            case 0x00: {
+                // 停止命令
+                set_gripper_velocity_by_id(0, 0.0f);
+                
+                AP::logger().Write_MessageF("Gripper0_EXT_CMD: STOP command executed");
+                GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Gripper0: STOP command executed");
+                
+                kegu_external_commands_received[0] = false; // 命令处理完成
+                command_in_progress[0] = false;
+                break;
+            }
+            
+            case 0x01: {
+                // 反转命令 - 设置负速度，包含电流检测
+                if (!command_in_progress[0]) {
+                    set_gripper_velocity_by_id(0, -1000.0f); // 反向速度
+                    command_in_progress[0] = true;
+                    
+                    AP::logger().Write_MessageF("Gripper0_EXT_CMD: REVERSE command started");
+                    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Gripper0: REVERSE command started");
+                }
+                
+                // 监控电流，当电流>200mA后停止
+                if (fabsf(gripper_current0) > 200.0f) {
+                    set_gripper_velocity_by_id(0, 0.0f);
+                    
+                    AP::logger().Write_MessageF("Gripper0_EXT_CMD: REVERSE stopped - current %.1fmA > 200mA", gripper_current0);
+                    GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "Gripper0: REVERSE stopped - current %.1fmA > 200mA", gripper_current0);
+                    
+                    command_in_progress[0] = false;
+                    kegu_external_commands_received[0] = false; // 命令处理完成
+                }
+                break;
+            }
+            
+            case 0x11: {
+                // 正转命令 - 设置正速度，包含电流检测
+                if (!command_in_progress[0]) {
+                    set_gripper_velocity_by_id(0, 1000.0f); // 正向速度
+                    command_in_progress[0] = true;
+                    
+                    AP::logger().Write_MessageF("Gripper0_EXT_CMD: FORWARD command started");
+                    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Gripper0: FORWARD command started");
+                }
+                
+                // 监控电流，当电流>200mA后停止
+                if (fabsf(gripper_current0) > 200.0f) {
+                    set_gripper_velocity_by_id(0, 0.0f);
+                    
+                    AP::logger().Write_MessageF("Gripper0_EXT_CMD: FORWARD stopped - current %.1fmA > 200mA", gripper_current0);
+                    GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "Gripper0: FORWARD stopped - current %.1fmA > 200mA", gripper_current0);
+                    
+                    command_in_progress[0] = false;
+                    kegu_external_commands_received[0] = false; // 命令处理完成
+                }
+                break;
+            }
+            
+            default: {
+                // 未知命令
+                AP::logger().Write_MessageF("Gripper0_EXT_CMD: Unknown command 0x%02X", kegu_external_commands[0]);
+                GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "Gripper0: Unknown command 0x%02X", kegu_external_commands[0]);
+                kegu_external_commands_received[0] = false; // 命令处理完成
+                command_in_progress[0] = false;
+                break;
+            }
+        }
+    }
+    
+    // 处理夹爪1的外部命令 (ID=160/0xA0)
+    if (kegu_external_commands_received[1]) {
+        // 检查是否是新命令
+        bool is_new_command = (kegu_external_commands[1] != last_processed_command[1]);
+        if (is_new_command) {
+            command_in_progress[1] = false;  // 重置状态以处理新命令
+            last_processed_command[1] = kegu_external_commands[1];
+        }
+        
+        // 获取夹爪1的当前电流
+        float gripper_current1 = get_gripper_current_by_id(1);
+        
+        // 处理有效的外部命令
+        switch (kegu_external_commands[1]) {
+            case 0x00: {
+                // 停止命令
+                set_gripper_velocity_by_id(1, 0.0f);
+                
+                AP::logger().Write_MessageF("Gripper1_EXT_CMD: STOP command executed");
+                GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Gripper1: STOP command executed");
+                
+                kegu_external_commands_received[1] = false; // 命令处理完成
+                command_in_progress[1] = false;
+                break;
+            }
+            
+            case 0x01: {
+                // 反转命令 - 设置负速度，包含电流检测
+                if (!command_in_progress[1]) {
+                    set_gripper_velocity_by_id(1, -1000.0f); // 反向速度
+                    command_in_progress[1] = true;
+                    
+                    AP::logger().Write_MessageF("Gripper1_EXT_CMD: REVERSE command started");
+                    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Gripper1: REVERSE command started");
+                }
+                
+                // 监控电流，当电流>200mA后停止
+                if (fabsf(gripper_current1) > 200.0f) {
+                    set_gripper_velocity_by_id(1, 0.0f);
+                    
+                    AP::logger().Write_MessageF("Gripper1_EXT_CMD: REVERSE stopped - current %.1fmA > 200mA", gripper_current1);
+                    GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "Gripper1: REVERSE stopped - current %.1fmA > 200mA", gripper_current1);
+                    
+                    command_in_progress[1] = false;
+                    kegu_external_commands_received[1] = false; // 命令处理完成
+                }
+                break;
+            }
+            
+            case 0x11: {
+                // 正转命令 - 设置正速度，包含电流检测
+                if (!command_in_progress[1]) {
+                    set_gripper_velocity_by_id(1, 1000.0f); // 正向速度
+                    command_in_progress[1] = true;
+                    
+                    AP::logger().Write_MessageF("Gripper1_EXT_CMD: FORWARD command started");
+                    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Gripper1: FORWARD command started");
+                }
+                
+                // 监控电流，当电流>200mA后停止
+                if (fabsf(gripper_current1) > 200.0f) {
+                    set_gripper_velocity_by_id(1, 0.0f);
+                    
+                    AP::logger().Write_MessageF("Gripper1_EXT_CMD: FORWARD stopped - current %.1fmA > 200mA", gripper_current1);
+                    GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "Gripper1: FORWARD stopped - current %.1fmA > 200mA", gripper_current1);
+                    
+                    command_in_progress[1] = false;
+                    kegu_external_commands_received[1] = false; // 命令处理完成
+                }
+                break;
+            }
+            
+            default: {
+                // 未知命令
+                AP::logger().Write_MessageF("Gripper1_EXT_CMD: Unknown command 0x%02X", kegu_external_commands[1]);
+                GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "Gripper1: Unknown command 0x%02X", kegu_external_commands[1]);
+                kegu_external_commands_received[1] = false; // 命令处理完成
+                command_in_progress[1] = false;
+                break;
+            }
+        }
+    }
+
+
+    // 发送双夹爪状态反馈到GCS（分开发送）
+    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Gripper0: C:%.1fmA P:%.2fdeg V:%.2fdeg/s", 
+                 current0, position0, velocity0);
+    GCS_SEND_TEXT(MAV_SEVERITY_INFO, "Gripper1: C:%.1fmA P:%.2fdeg V:%.2fdeg/s", 
+                 current1, position1, velocity1);
 }
 
 //---------------------双夹爪控制函数---------------------
