@@ -269,7 +269,33 @@ void CAN_Robot_Rx_Process::process_can2_trajectory_command(const CAN_Robot_Rx_Qu
         CAN2TrajectoryData trajectory_item;
         trajectory_item.arm_id = arm_id;  // 设置机械臂ID
         for (int i = 0; i < 6; ++i) {
-            trajectory_item.joint_positions[i] = traj_cache[arm_id][point_id].joints[i]; // 直接使用float值
+            // 双臂系统关节位置限制：每个臂都应用相同的限制规则
+            // ARM1和ARM2的关节限制规则：
+            // 关节2,3,5 (索引1,2,4): ±110度
+            // 关节1,4,6 (索引0,3,5): ±180度
+            float joint_pos = traj_cache[arm_id][point_id].joints[i];
+            float upper_limit, lower_limit;
+            
+            if (i == 1 || i == 2 || i == 4) {
+                // 关节2,3,5：±110度（适用于ARM1和ARM2）
+                upper_limit = 110.0f;
+                lower_limit = -110.0f;
+            } else {
+                // 关节1,4,6：±180度（适用于ARM1和ARM2）
+                upper_limit = 180.0f;
+                lower_limit = -180.0f;
+            }
+            
+            if (joint_pos > upper_limit) {
+                joint_pos = upper_limit;
+                GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "CAN2_LIMIT: ARM%d_J%d pos %.2f -> %.1f (upper limit)", 
+                             arm_id+1, i+1, traj_cache[arm_id][point_id].joints[i], upper_limit);
+            } else if (joint_pos < lower_limit) {
+                joint_pos = lower_limit;
+                GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "CAN2_LIMIT: ARM%d_J%d pos %.2f -> %.1f (lower limit)", 
+                             arm_id+1, i+1, traj_cache[arm_id][point_id].joints[i], lower_limit);
+            }
+            trajectory_item.joint_positions[i] = joint_pos; // 使用限制后的值
         }
         trajectory_item.is_final_point = traj_cache[arm_id][point_id].is_final;
         trajectory_item.timestamp_us = traj_cache[arm_id][point_id].timestamp_us;
